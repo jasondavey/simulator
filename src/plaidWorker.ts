@@ -4,6 +4,19 @@ import dotenv from "dotenv";
 
 dotenv.config(); // Load environment variables
 
+// Load Configurations
+const MAILGUN_API_KEY = process.env.MAILGUN_API_KEY!;
+const MAILGUN_DOMAIN = process.env.MAILGUN_DOMAIN!;
+const RECIPIENT_EMAIL =
+  process.env.RECIPIENT_EMAIL || "platform@myverascore.com";
+const PLATFORM_EMAIL_SENDER =
+  process.env.PLATFORM_EMAIL_SENDER || `no-reply@${MAILGUN_DOMAIN}`;
+const TIMEOUT_MS = parseInt(process.env.TIMEOUT_MS || "600000", 10); // Default: 10 min
+const INTERVAL_MS = parseInt(process.env.INTERVAL_MS || "10000", 10); // Default: 10 sec
+
+// Initialize Mailgun
+const mg = mailgun({ apiKey: MAILGUN_API_KEY, domain: MAILGUN_DOMAIN });
+
 interface PlaidItem {
   id: string;
   ownerId: string;
@@ -15,14 +28,7 @@ interface PlaidWebhook {
   webhookType: string;
 }
 
-// Environment Variables
-const MAILGUN_API_KEY = process.env.MAILGUN_API_KEY!;
-const MAILGUN_DOMAIN = process.env.MAILGUN_DOMAIN!;
-const RECIPIENT_EMAIL = "platform@myverascore.com"; // Change this if needed
-
-// Initialize Mailgun
-const mg = mailgun({ apiKey: MAILGUN_API_KEY, domain: MAILGUN_DOMAIN });
-
+// Mock Data
 const MOCK_PLAID_ITEMS: PlaidItem[] = [
   { id: "item-001", ownerId: "owner123" },
   { id: "item-002", ownerId: "owner123" },
@@ -40,13 +46,22 @@ let processedItems = new Set<string>();
 let isProcessingComplete = false;
 let startTime: number | null = null;
 let endTime: number | null = null;
-const TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes in milliseconds
 let timeoutHandle: NodeJS.Timeout | null = null;
 
 async function fetchPlaidItemsByOwner(ownerId: string): Promise<PlaidItem[]> {
   console.log(`fetch plaid items by owner: ${ownerId}`);
   await wait(300);
-  return MOCK_PLAID_ITEMS.filter((item) => item.ownerId === ownerId);
+
+  const items = MOCK_PLAID_ITEMS.filter((item) => item.ownerId === ownerId);
+
+  if (items.length === 0) {
+    console.log(
+      `❌ No Plaid items found for ownerId: ${ownerId}. Exiting process.`
+    );
+    process.exit(1);
+  }
+
+  return items;
 }
 
 async function fetchHistoricalUpdateWebhooks(
@@ -77,9 +92,7 @@ function wait(ms: number): Promise<void> {
 }
 
 async function processOwner(ownerId: string): Promise<void> {
-  if (isProcessingComplete) {
-    return;
-  }
+  if (isProcessingComplete) return;
 
   try {
     if (!startTime) {
@@ -130,23 +143,11 @@ function startVeraScorerProcess(): void {
   console.log("VeraScorer process completed.");
 }
 
-async function sendTimeoutEmail(ownerId: string) {
-  console.log("Sending timeout notification email...");
-
-  const subject = `⚠️ Plaid Processing Timeout for ${ownerId}`;
-  const body = `
-    The Plaid processing for ownerId: ${ownerId} has exceeded the 10-minute timeout limit.
-    
-    Request Details:
-    - Start Time: ${startTime ? new Date(startTime).toISOString() : "Unknown"}
-    - End Time: ${endTime ? new Date(endTime).toISOString() : "Not completed"}
-    - Processed Items: ${Array.from(processedItems).join(", ") || "None"}
-    
-    Manual intervention may be required.
-  `;
+async function sendEmail(subject: string, body: string) {
+  console.log(`Sending email: ${subject}`);
 
   const emailData = {
-    from: `Verascore Platform <no-reply@${MAILGUN_DOMAIN}>`,
+    from: `Verascore Platform <${PLATFORM_EMAIL_SENDER}>`,
     to: RECIPIENT_EMAIL,
     subject: subject,
     text: body,
@@ -154,15 +155,28 @@ async function sendTimeoutEmail(ownerId: string) {
 
   try {
     await mg.messages().send(emailData);
-    console.log("Timeout email sent successfully.");
+    console.log("Email sent successfully.");
   } catch (error) {
-    console.error("Failed to send timeout email:", error);
+    console.error("Failed to send email:", error);
   }
 }
 
-async function sendCompletionEmail(ownerId: string) {
-  console.log("Sending completion notification email...");
+async function sendTimeoutEmail(ownerId: string) {
+  const subject = `⚠️ Plaid Processing Timeout for ${ownerId}`;
+  const body = `
+    The Plaid processing for ownerId: ${ownerId} has exceeded the timeout limit.
+    
+    Request Details:
+    - Start Time: ${startTime ? new Date(startTime).toISOString() : "Unknown"}
+    - Processed Items: ${Array.from(processedItems).join(", ") || "None"}
+    
+    Manual intervention may be required.
+  `;
 
+  await sendEmail(subject, body);
+}
+
+async function sendCompletionEmail(ownerId: string) {
   const subject = `✅ Verascore Calculation Complete for ${ownerId}`;
   const body = `
     The Plaid processing for ownerId: ${ownerId} has been successfully completed.
@@ -178,19 +192,7 @@ async function sendCompletionEmail(ownerId: string) {
     - Processed Items: ${Array.from(processedItems).join(", ") || "None"}
   `;
 
-  const emailData = {
-    from: `Verascore Platform <no-reply@${MAILGUN_DOMAIN}>`,
-    to: RECIPIENT_EMAIL,
-    subject: subject,
-    text: body,
-  };
-
-  try {
-    await mg.messages().send(emailData);
-    console.log("Completion email sent successfully.");
-  } catch (error) {
-    console.error("Failed to send completion email:", error);
-  }
+  await sendEmail(subject, body);
 }
 
 async function main() {
@@ -198,7 +200,7 @@ async function main() {
   console.log(`Starting Plaid worker for ownerId=${ownerId}`);
 
   timeoutHandle = setTimeout(async () => {
-    console.log("⏳ Process timed out after 10 minutes! Stopping execution.");
+    console.log("⏳ Process timed out! Sending alert email...");
     await sendTimeoutEmail(ownerId);
     process.exit(1);
   }, TIMEOUT_MS);
@@ -209,7 +211,7 @@ async function main() {
     } else {
       clearInterval(interval);
     }
-  }, 10_000);
+  }, INTERVAL_MS);
 }
 
 void main();
