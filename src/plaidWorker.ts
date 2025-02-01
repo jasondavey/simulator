@@ -48,6 +48,16 @@ let startTime: number | null = null;
 let endTime: number | null = null;
 let timeoutHandle: NodeJS.Timeout | null = null;
 
+function validateOwnerId(ownerId: string): void {
+  const auth0Pattern = /^auth0\|[a-zA-Z0-9]+$/;
+
+  if (!auth0Pattern.test(ownerId)) {
+    throw new Error(
+      `Invalid Auth0 ID format: ${ownerId}. Must follow 'auth0|xxxxxxxx' format.`
+    );
+  }
+}
+
 async function fetchPlaidItemsByOwner(ownerId: string): Promise<PlaidItem[]> {
   try {
     console.log(`fetch plaid items by owner: ${ownerId}`);
@@ -214,6 +224,14 @@ async function main() {
   try {
     const ownerId = process.argv[2] || "owner123";
     console.log(`Starting Plaid worker for ownerId=${ownerId}`);
+
+    if (!ownerId) {
+      throw new Error(
+        "Missing ownerId argument. Please provide a valid Auth0 ID."
+      );
+    }
+
+    validateOwnerId(ownerId);
 
     timeoutHandle = setTimeout(async () => {
       console.log("⏳ Process timed out! Sending alert email...");
