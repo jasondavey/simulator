@@ -49,42 +49,56 @@ let endTime: number | null = null;
 let timeoutHandle: NodeJS.Timeout | null = null;
 
 async function fetchPlaidItemsByOwner(ownerId: string): Promise<PlaidItem[]> {
-  console.log(`fetch plaid items by owner: ${ownerId}`);
-  await wait(300);
+  try {
+    console.log(`fetch plaid items by owner: ${ownerId}`);
+    await wait(300);
 
-  const items = MOCK_PLAID_ITEMS.filter((item) => item.ownerId === ownerId);
+    const items = MOCK_PLAID_ITEMS.filter((item) => item.ownerId === ownerId);
 
-  if (items.length === 0) {
-    console.log(
-      `❌ No Plaid items found for ownerId: ${ownerId}. Exiting process.`
-    );
+    if (items.length === 0) {
+      console.error(
+        `❌ No Plaid items found for ownerId: ${ownerId}. Exiting process.`
+      );
+      process.exit(1);
+    }
+
+    return items;
+  } catch (error) {
+    console.error("Error fetching Plaid items:", error);
     process.exit(1);
   }
-
-  return items;
 }
 
 async function fetchHistoricalUpdateWebhooks(
   items: PlaidItem[]
 ): Promise<PlaidWebhook[]> {
-  console.log(
-    'fetch all webhooks that are type "historical updates" by those items'
-  );
-  const itemIds = items.map((i) => i.id);
-  await wait(300);
-  return MOCK_WEBHOOKS.filter(
-    (wh) =>
-      itemIds.includes(wh.itemId) && wh.webhookType === "historical update"
-  );
+  try {
+    console.log(
+      'fetch all webhooks that are type "historical updates" by those items'
+    );
+    const itemIds = items.map((i) => i.id);
+    await wait(300);
+    return MOCK_WEBHOOKS.filter(
+      (wh) =>
+        itemIds.includes(wh.itemId) && wh.webhookType === "historical update"
+    );
+  } catch (error) {
+    console.error("Error fetching webhooks:", error);
+    return [];
+  }
 }
 
 async function importPlaidData(itemId: string): Promise<void> {
-  console.log(
-    `if webhook available, import plaid item data (itemId = ${itemId}) into our database`
-  );
-  await wait(500);
-  console.log(`Imported data for itemId = ${itemId} successfully.`);
-  processedItems.add(itemId);
+  try {
+    console.log(
+      `if webhook available, import plaid item data (itemId = ${itemId}) into our database`
+    );
+    await wait(500);
+    console.log(`Imported data for itemId = ${itemId} successfully.`);
+    processedItems.add(itemId);
+  } catch (error) {
+    console.error(`Error importing Plaid data for itemId ${itemId}:`, error);
+  }
 }
 
 function wait(ms: number): Promise<void> {
@@ -95,9 +109,7 @@ async function processOwner(ownerId: string): Promise<void> {
   if (isProcessingComplete) return;
 
   try {
-    if (!startTime) {
-      startTime = Date.now();
-    }
+    if (!startTime) startTime = Date.now();
 
     const items = await fetchPlaidItemsByOwner(ownerId);
     const webhooks = await fetchHistoricalUpdateWebhooks(items);
@@ -111,13 +123,12 @@ async function processOwner(ownerId: string): Promise<void> {
       isProcessingComplete = true;
       endTime = Date.now();
 
-      if (timeoutHandle) {
-        clearTimeout(timeoutHandle);
-      }
+      if (timeoutHandle) clearTimeout(timeoutHandle);
 
       if (startTime && endTime) {
-        const timeTaken = (endTime - startTime) / 1000;
-        console.log(`Total processing time: ${timeTaken.toFixed(2)} seconds`);
+        console.log(
+          `Total processing time: ${(endTime - startTime) / 1000} seconds`
+        );
       }
 
       await sendCompletionEmail(ownerId);
@@ -144,16 +155,16 @@ function startVeraScorerProcess(): void {
 }
 
 async function sendEmail(subject: string, body: string) {
-  console.log(`Sending email: ${subject}`);
-
-  const emailData = {
-    from: `Verascore Platform <${PLATFORM_EMAIL_SENDER}>`,
-    to: RECIPIENT_EMAIL,
-    subject: subject,
-    text: body,
-  };
-
   try {
+    console.log(`Sending email: ${subject}`);
+
+    const emailData = {
+      from: `Verascore Platform <${PLATFORM_EMAIL_SENDER}>`,
+      to: RECIPIENT_EMAIL,
+      subject,
+      text: body,
+    };
+
     await mg.messages().send(emailData);
     console.log("Email sent successfully.");
   } catch (error) {
@@ -165,14 +176,11 @@ async function sendTimeoutEmail(ownerId: string) {
   const subject = `⚠️ Plaid Processing Timeout for ${ownerId}`;
   const body = `
     The Plaid processing for ownerId: ${ownerId} has exceeded the timeout limit.
-    
     Request Details:
     - Start Time: ${startTime ? new Date(startTime).toISOString() : "Unknown"}
     - Processed Items: ${Array.from(processedItems).join(", ") || "None"}
-    
     Manual intervention may be required.
   `;
-
   await sendEmail(subject, body);
 }
 
@@ -180,7 +188,6 @@ async function sendCompletionEmail(ownerId: string) {
   const subject = `✅ Verascore Calculation Complete for ${ownerId}`;
   const body = `
     The Plaid processing for ownerId: ${ownerId} has been successfully completed.
-    
     Request Details:
     - Start Time: ${startTime ? new Date(startTime).toISOString() : "Unknown"}
     - End Time: ${endTime ? new Date(endTime).toISOString() : "Not completed"}
@@ -191,27 +198,31 @@ async function sendCompletionEmail(ownerId: string) {
     } seconds
     - Processed Items: ${Array.from(processedItems).join(", ") || "None"}
   `;
-
   await sendEmail(subject, body);
 }
 
 async function main() {
-  const ownerId = process.argv[2] || "owner123";
-  console.log(`Starting Plaid worker for ownerId=${ownerId}`);
+  try {
+    const ownerId = process.argv[2] || "owner123";
+    console.log(`Starting Plaid worker for ownerId=${ownerId}`);
 
-  timeoutHandle = setTimeout(async () => {
-    console.log("⏳ Process timed out! Sending alert email...");
-    await sendTimeoutEmail(ownerId);
+    timeoutHandle = setTimeout(async () => {
+      console.log("⏳ Process timed out! Sending alert email...");
+      await sendTimeoutEmail(ownerId);
+      process.exit(1);
+    }, TIMEOUT_MS);
+
+    const interval = setInterval(() => {
+      if (!isProcessingComplete) {
+        void processOwner(ownerId);
+      } else {
+        clearInterval(interval);
+      }
+    }, INTERVAL_MS);
+  } catch (error) {
+    console.error("Fatal error in main process:", error);
     process.exit(1);
-  }, TIMEOUT_MS);
-
-  const interval = setInterval(() => {
-    if (!isProcessingComplete) {
-      void processOwner(ownerId);
-    } else {
-      clearInterval(interval);
-    }
-  }, INTERVAL_MS);
+  }
 }
 
 void main();
