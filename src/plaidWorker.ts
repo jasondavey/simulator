@@ -13,6 +13,7 @@ const PLATFORM_EMAIL_SENDER =
   process.env.PLATFORM_EMAIL_SENDER || `no-reply@${MAILGUN_DOMAIN}`;
 const TIMEOUT_MS = parseInt(process.env.TIMEOUT_MS || "600000", 10); // Default: 10 min
 const INTERVAL_MS = parseInt(process.env.INTERVAL_MS || "10000", 10); // Default: 10 sec
+const PROCESS_NAME = process.env.PROCESS_NAME;
 
 // Initialize Mailgun
 const mg = mailgun({ apiKey: MAILGUN_API_KEY, domain: MAILGUN_DOMAIN });
@@ -30,9 +31,9 @@ interface PlaidWebhook {
 
 // Mock Data
 const MOCK_PLAID_ITEMS: PlaidItem[] = [
-  { id: "item-001", ownerId: "owner123" },
-  { id: "item-002", ownerId: "owner123" },
-  { id: "item-003", ownerId: "owner456" },
+  { id: "item-001", ownerId: "auth0|6723a660523e8e7b009381f4" },
+  { id: "item-002", ownerId: "auth0|6723a660523e8e7b009381f4" },
+  { id: "item-003", ownerId: "auth0|6723a660523e8e7b009381f4" },
 ];
 
 const MOCK_WEBHOOKS: PlaidWebhook[] = [
@@ -160,7 +161,7 @@ async function processOwner(ownerId: string): Promise<void> {
 }
 
 function startVeraScorerProcess(): void {
-  console.log("=== Start VeraScorer Process ===");
+  console.log(`=== Start  ${PROCESS_NAME} Process ===`);
   console.log("Running VeraScorer process...");
   console.log("VeraScorer process completed.");
 }
@@ -186,7 +187,7 @@ async function sendEmail(subject: string, body: string) {
 async function sendCompletionEmail(ownerId: string) {
   const subject = `✅ Verascore Calculation Complete for ${ownerId}`;
   const body = `
-    The Plaid processing for ownerId: ${ownerId} has been successfully completed.
+     ${PROCESS_NAME} processing for ownerId: ${ownerId} has been successfully completed.
     
     Request Details:
     - Start Time: ${startTime ? new Date(startTime).toISOString() : "Unknown"}
@@ -222,8 +223,7 @@ async function sendErrorEmail(context: string, error: any, details: any) {
 
 async function main() {
   try {
-    const ownerId = process.argv[2] || "owner123";
-    console.log(`Starting Plaid worker for ownerId=${ownerId}`);
+    const ownerId = process.argv[2];
 
     if (!ownerId) {
       throw new Error(
@@ -233,10 +233,12 @@ async function main() {
 
     validateOwnerId(ownerId);
 
+    console.log(`Starting ${PROCESS_NAME} for owner=${ownerId}`);
+
     timeoutHandle = setTimeout(async () => {
-      console.log("⏳ Process timed out! Sending alert email...");
+      console.log("⏳  ${PROCESS_NAME} timed out! Sending alert email...");
       await sendErrorEmail(
-        "Process Timeout",
+        `${PROCESS_NAME} Timeout`,
         new Error("Process exceeded timeout limit"),
         { ownerId }
       );
@@ -251,7 +253,7 @@ async function main() {
       }
     }, INTERVAL_MS);
   } catch (error) {
-    console.error("Fatal error in main process:", error);
+    console.error(`Fatal error in  ${PROCESS_NAME} process:`, error);
     await sendErrorEmail("Fatal Error", error, {});
     process.exit(1);
   }
