@@ -97,6 +97,7 @@ async function processOwner(ownerId: string): Promise<void> {
         console.log(`Total processing time: ${timeTaken.toFixed(2)} seconds`);
       }
 
+      await sendCompletionEmail(ownerId); // Send completion email
       startVeraScorerProcess();
       return;
     }
@@ -130,7 +131,7 @@ async function sendTimeoutEmail(ownerId: string) {
     },
   });
 
-  const subject = `⚠️ Plaid Processing Timeout for Owner ${ownerId}`;
+  const subject = `⚠️ Plaid Processing Timeout for ${ownerId}`;
   const body = `
     The Plaid processing for ownerId: ${ownerId} has exceeded the 10-minute timeout limit.
     
@@ -154,6 +155,47 @@ async function sendTimeoutEmail(ownerId: string) {
     console.log("Timeout email sent successfully.");
   } catch (error) {
     console.error("Failed to send timeout email:", error);
+  }
+}
+
+async function sendCompletionEmail(ownerId: string) {
+  console.log("Sending completion notification email...");
+
+  const transporter = nodemailer.createTransport({
+    service: "gmail", // Use your actual email provider
+    auth: {
+      user: "your-email@gmail.com", // Replace with actual sender email
+      pass: "your-email-password", // Replace with an environment variable in production
+    },
+  });
+
+  const subject = `✅ Verascore Calculation Complete for ${ownerId}`;
+  const body = `
+    The Plaid processing for ownerId: ${ownerId} has been successfully completed.
+    
+    Request Details:
+    - Start Time: ${startTime ? new Date(startTime).toISOString() : "Unknown"}
+    - End Time: ${endTime ? new Date(endTime).toISOString() : "Not completed"}
+    - Total Processing Time: ${
+      startTime && endTime
+        ? ((endTime - startTime) / 1000).toFixed(2)
+        : "Unknown"
+    } seconds
+    - Processed Items: ${Array.from(processedItems).join(", ") || "None"}
+  `;
+
+  const mailOptions = {
+    from: "platform@myverascore.com",
+    to: "platform@myverascore.com",
+    subject: subject,
+    text: body,
+  };
+
+  try {
+    await transporter.sendMail(mailOptions);
+    console.log("Completion email sent successfully.");
+  } catch (error) {
+    console.error("Failed to send completion email:", error);
   }
 }
 
