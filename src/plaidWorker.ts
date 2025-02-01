@@ -56,15 +56,13 @@ async function fetchPlaidItemsByOwner(ownerId: string): Promise<PlaidItem[]> {
     const items = MOCK_PLAID_ITEMS.filter((item) => item.ownerId === ownerId);
 
     if (items.length === 0) {
-      console.error(
-        `❌ No Plaid items found for ownerId: ${ownerId}. Exiting process.`
-      );
-      process.exit(1);
+      throw new Error(`❌ No Plaid items found for ownerId: ${ownerId}`);
     }
 
     return items;
   } catch (error) {
     console.error("Error fetching Plaid items:", error);
+    await sendErrorEmail("Error Fetching Plaid Items", error, { ownerId });
     process.exit(1);
   }
 }
@@ -84,6 +82,7 @@ async function fetchHistoricalUpdateWebhooks(
     );
   } catch (error) {
     console.error("Error fetching webhooks:", error);
+    await sendErrorEmail("Error Fetching Webhooks", error, {});
     return [];
   }
 }
@@ -98,6 +97,7 @@ async function importPlaidData(itemId: string): Promise<void> {
     processedItems.add(itemId);
   } catch (error) {
     console.error(`Error importing Plaid data for itemId ${itemId}:`, error);
+    await sendErrorEmail("Error Importing Plaid Data", error, { itemId });
   }
 }
 
@@ -145,6 +145,7 @@ async function processOwner(ownerId: string): Promise<void> {
     );
   } catch (error) {
     console.error("Error in processOwner:", error);
+    await sendErrorEmail("Process Owner Error", error, { ownerId });
   }
 }
 
@@ -172,22 +173,11 @@ async function sendEmail(subject: string, body: string) {
   }
 }
 
-async function sendTimeoutEmail(ownerId: string) {
-  const subject = `⚠️ Plaid Processing Timeout for ${ownerId}`;
-  const body = `
-    The Plaid processing for ownerId: ${ownerId} has exceeded the timeout limit.
-    Request Details:
-    - Start Time: ${startTime ? new Date(startTime).toISOString() : "Unknown"}
-    - Processed Items: ${Array.from(processedItems).join(", ") || "None"}
-    Manual intervention may be required.
-  `;
-  await sendEmail(subject, body);
-}
-
 async function sendCompletionEmail(ownerId: string) {
   const subject = `✅ Verascore Calculation Complete for ${ownerId}`;
   const body = `
     The Plaid processing for ownerId: ${ownerId} has been successfully completed.
+    
     Request Details:
     - Start Time: ${startTime ? new Date(startTime).toISOString() : "Unknown"}
     - End Time: ${endTime ? new Date(endTime).toISOString() : "Not completed"}
@@ -198,6 +188,25 @@ async function sendCompletionEmail(ownerId: string) {
     } seconds
     - Processed Items: ${Array.from(processedItems).join(", ") || "None"}
   `;
+
+  await sendEmail(subject, body);
+}
+
+async function sendErrorEmail(context: string, error: any, details: any) {
+  const subject = `❌ Error: ${context}`;
+  const body = `
+    An error occurred in the process: ${context}
+    
+    Error Message:
+    ${error.message || error.toString()}
+
+    Stack Trace:
+    ${error.stack || "No stack trace available"}
+
+    Additional Details:
+    ${JSON.stringify(details, null, 2)}
+  `;
+
   await sendEmail(subject, body);
 }
 
@@ -208,7 +217,11 @@ async function main() {
 
     timeoutHandle = setTimeout(async () => {
       console.log("⏳ Process timed out! Sending alert email...");
-      await sendTimeoutEmail(ownerId);
+      await sendErrorEmail(
+        "Process Timeout",
+        new Error("Process exceeded timeout limit"),
+        { ownerId }
+      );
       process.exit(1);
     }, TIMEOUT_MS);
 
@@ -221,6 +234,7 @@ async function main() {
     }, INTERVAL_MS);
   } catch (error) {
     console.error("Fatal error in main process:", error);
+    await sendErrorEmail("Fatal Error", error, {});
     process.exit(1);
   }
 }
