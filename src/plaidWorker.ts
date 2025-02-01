@@ -28,6 +28,8 @@ let processedItems = new Set<string>();
 let isProcessingComplete = false;
 let startTime: number | null = null;
 let endTime: number | null = null;
+const TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes in milliseconds
+let timeoutHandle: NodeJS.Timeout | null = null;
 
 async function fetchPlaidItemsByOwner(ownerId: string): Promise<PlaidItem[]> {
   console.log(`fetch plaid items by owner: ${ownerId}`);
@@ -80,6 +82,10 @@ async function processOwner(ownerId: string): Promise<void> {
       isProcessingComplete = true;
       endTime = Date.now(); // Capture end time
 
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle); // Cancel timeout since process is complete
+      }
+
       // Calculate and log total time taken
       if (startTime && endTime) {
         const timeTaken = (endTime - startTime) / 1000; // Convert ms to seconds
@@ -115,6 +121,12 @@ function wait(ms: number) {
 async function main() {
   const ownerId = process.argv[2] || "owner123";
   console.log(`Starting Plaid worker for ownerId=${ownerId}`);
+
+  // Set a timeout to stop processing after 10 minutes
+  timeoutHandle = setTimeout(() => {
+    console.log("⏳ Process timed out after 10 minutes! Stopping execution.");
+    process.exit(1);
+  }, TIMEOUT_MS);
 
   const interval = setInterval(() => {
     if (!isProcessingComplete) {
