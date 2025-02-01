@@ -1,5 +1,8 @@
 #!/usr/bin/env ts-node
-import nodemailer from "nodemailer";
+import mailgun from "mailgun-js";
+import dotenv from "dotenv";
+
+dotenv.config(); // Load environment variables
 
 interface PlaidItem {
   id: string;
@@ -11,6 +14,14 @@ interface PlaidWebhook {
   itemId: string;
   webhookType: string;
 }
+
+// Environment Variables
+const MAILGUN_API_KEY = process.env.MAILGUN_API_KEY!;
+const MAILGUN_DOMAIN = process.env.MAILGUN_DOMAIN!;
+const RECIPIENT_EMAIL = "platform@myverascore.com"; // Change this if needed
+
+// Initialize Mailgun
+const mg = mailgun({ apiKey: MAILGUN_API_KEY, domain: MAILGUN_DOMAIN });
 
 const MOCK_PLAID_ITEMS: PlaidItem[] = [
   { id: "item-001", ownerId: "owner123" },
@@ -72,7 +83,7 @@ async function processOwner(ownerId: string): Promise<void> {
 
   try {
     if (!startTime) {
-      startTime = Date.now(); // Start timer when processing begins
+      startTime = Date.now();
     }
 
     const items = await fetchPlaidItemsByOwner(ownerId);
@@ -85,19 +96,18 @@ async function processOwner(ownerId: string): Promise<void> {
     if (pendingItems.length === 0) {
       console.log("All Plaid items have been processed.");
       isProcessingComplete = true;
-      endTime = Date.now(); // Capture end time
+      endTime = Date.now();
 
       if (timeoutHandle) {
-        clearTimeout(timeoutHandle); // Cancel timeout since process is complete
+        clearTimeout(timeoutHandle);
       }
 
-      // Calculate and log total time taken
       if (startTime && endTime) {
-        const timeTaken = (endTime - startTime) / 1000; // Convert ms to seconds
+        const timeTaken = (endTime - startTime) / 1000;
         console.log(`Total processing time: ${timeTaken.toFixed(2)} seconds`);
       }
 
-      await sendCompletionEmail(ownerId); // Send completion email
+      await sendCompletionEmail(ownerId);
       startVeraScorerProcess();
       return;
     }
@@ -123,14 +133,6 @@ function startVeraScorerProcess(): void {
 async function sendTimeoutEmail(ownerId: string) {
   console.log("Sending timeout notification email...");
 
-  const transporter = nodemailer.createTransport({
-    service: "gmail", // Use your actual email provider
-    auth: {
-      user: "your-email@gmail.com", // Replace with actual sender email
-      pass: "your-email-password", // Replace with an environment variable in production
-    },
-  });
-
   const subject = `⚠️ Plaid Processing Timeout for ${ownerId}`;
   const body = `
     The Plaid processing for ownerId: ${ownerId} has exceeded the 10-minute timeout limit.
@@ -143,15 +145,15 @@ async function sendTimeoutEmail(ownerId: string) {
     Manual intervention may be required.
   `;
 
-  const mailOptions = {
-    from: "platform@myverascore.com",
-    to: "platform@myverascore.com",
+  const emailData = {
+    from: `Verascore Platform <no-reply@${MAILGUN_DOMAIN}>`,
+    to: RECIPIENT_EMAIL,
     subject: subject,
     text: body,
   };
 
   try {
-    await transporter.sendMail(mailOptions);
+    await mg.messages().send(emailData);
     console.log("Timeout email sent successfully.");
   } catch (error) {
     console.error("Failed to send timeout email:", error);
@@ -160,14 +162,6 @@ async function sendTimeoutEmail(ownerId: string) {
 
 async function sendCompletionEmail(ownerId: string) {
   console.log("Sending completion notification email...");
-
-  const transporter = nodemailer.createTransport({
-    service: "gmail", // Use your actual email provider
-    auth: {
-      user: "your-email@gmail.com", // Replace with actual sender email
-      pass: "your-email-password", // Replace with an environment variable in production
-    },
-  });
 
   const subject = `✅ Verascore Calculation Complete for ${ownerId}`;
   const body = `
@@ -184,15 +178,15 @@ async function sendCompletionEmail(ownerId: string) {
     - Processed Items: ${Array.from(processedItems).join(", ") || "None"}
   `;
 
-  const mailOptions = {
-    from: "platform@myverascore.com",
-    to: "platform@myverascore.com",
+  const emailData = {
+    from: `Verascore Platform <no-reply@${MAILGUN_DOMAIN}>`,
+    to: RECIPIENT_EMAIL,
     subject: subject,
     text: body,
   };
 
   try {
-    await transporter.sendMail(mailOptions);
+    await mg.messages().send(emailData);
     console.log("Completion email sent successfully.");
   } catch (error) {
     console.error("Failed to send completion email:", error);
@@ -203,7 +197,6 @@ async function main() {
   const ownerId = process.argv[2] || "owner123";
   console.log(`Starting Plaid worker for ownerId=${ownerId}`);
 
-  // Set a timeout to stop processing after 10 minutes
   timeoutHandle = setTimeout(async () => {
     console.log("⏳ Process timed out after 10 minutes! Stopping execution.");
     await sendTimeoutEmail(ownerId);
@@ -214,7 +207,7 @@ async function main() {
     if (!isProcessingComplete) {
       void processOwner(ownerId);
     } else {
-      clearInterval(interval); // Stop the loop when everything is processed
+      clearInterval(interval);
     }
   }, 10_000);
 }
