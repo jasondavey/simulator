@@ -1,4 +1,5 @@
 #!/usr/bin/env ts-node
+import nodemailer from "nodemailer";
 
 interface PlaidItem {
   id: string;
@@ -60,6 +61,10 @@ async function importPlaidData(itemId: string): Promise<void> {
   processedItems.add(itemId);
 }
 
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function processOwner(ownerId: string): Promise<void> {
   if (isProcessingComplete) {
     return;
@@ -114,8 +119,42 @@ function startVeraScorerProcess(): void {
   console.log("VeraScorer process completed.");
 }
 
-function wait(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+async function sendTimeoutEmail(ownerId: string) {
+  console.log("Sending timeout notification email...");
+
+  const transporter = nodemailer.createTransport({
+    service: "gmail", // Use your actual email provider
+    auth: {
+      user: "your-email@gmail.com", // Replace with actual sender email
+      pass: "your-email-password", // Replace with an environment variable in production
+    },
+  });
+
+  const subject = `⚠️ Plaid Processing Timeout for Owner ${ownerId}`;
+  const body = `
+    The Plaid processing for ownerId: ${ownerId} has exceeded the 10-minute timeout limit.
+    
+    Request Details:
+    - Start Time: ${startTime ? new Date(startTime).toISOString() : "Unknown"}
+    - End Time: ${endTime ? new Date(endTime).toISOString() : "Not completed"}
+    - Processed Items: ${Array.from(processedItems).join(", ") || "None"}
+    
+    Manual intervention may be required.
+  `;
+
+  const mailOptions = {
+    from: "platform@myverascore.com",
+    to: "platform@myverascore.com",
+    subject: subject,
+    text: body,
+  };
+
+  try {
+    await transporter.sendMail(mailOptions);
+    console.log("Timeout email sent successfully.");
+  } catch (error) {
+    console.error("Failed to send timeout email:", error);
+  }
 }
 
 async function main() {
@@ -123,8 +162,9 @@ async function main() {
   console.log(`Starting Plaid worker for ownerId=${ownerId}`);
 
   // Set a timeout to stop processing after 10 minutes
-  timeoutHandle = setTimeout(() => {
+  timeoutHandle = setTimeout(async () => {
     console.log("⏳ Process timed out after 10 minutes! Stopping execution.");
+    await sendTimeoutEmail(ownerId);
     process.exit(1);
   }, TIMEOUT_MS);
 
