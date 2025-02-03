@@ -1,23 +1,20 @@
-#!/usr/bin/env ts-node
 import mailgun from "mailgun-js";
 import dotenv from "dotenv";
 
-dotenv.config(); // Load environment variables
+dotenv.config();
 
-// Load Configurations
 const MAILGUN_API_KEY = process.env.MAILGUN_API_KEY!;
 const MAILGUN_DOMAIN = process.env.MAILGUN_DOMAIN!;
 const RECIPIENT_EMAIL =
   process.env.RECIPIENT_EMAIL || "platform@myverascore.com";
 const PLATFORM_EMAIL_SENDER =
   process.env.PLATFORM_EMAIL_SENDER || `no-reply@${MAILGUN_DOMAIN}`;
-const TIMEOUT_MS = parseInt(process.env.TIMEOUT_MS || "600000", 10); // Default: 10 min
-const INTERVAL_MS = parseInt(process.env.INTERVAL_MS || "10000", 10); // Default: 10 sec
+const TIMEOUT_MS = parseInt(process.env.TIMEOUT_MS || "600000", 10);
+const INTERVAL_MS = parseInt(process.env.INTERVAL_MS || "10000", 10);
+const PROCESS_NAME = process.env.PROCESS_NAME;
 
-// Initialize Mailgun
 const mg = mailgun({ apiKey: MAILGUN_API_KEY, domain: MAILGUN_DOMAIN });
 
-// Track processed items, webhooks, and errors
 let processedItems = new Set<string>();
 let processedSummary: {
   itemId: string;
@@ -38,8 +35,8 @@ const MOCK_VALID_AUTH0_IDS = new Set([
   "auth0|abcdef1234567890",
 ]);
 
-// Validate Owner ID
-function validateOwnerId(ownerId: string): void {
+// Validate Owner ID formatting
+function validateOwnerIdFormatting(ownerId: string): void {
   const auth0Pattern = /^auth0\|[a-zA-Z0-9]+$/;
 
   if (!auth0Pattern.test(ownerId)) {
@@ -51,9 +48,10 @@ function validateOwnerId(ownerId: string): void {
   if (!MOCK_VALID_AUTH0_IDS.has(ownerId)) {
     throw new Error(`Auth0 ID ${ownerId} does not exist.`);
   }
+
+  console.log(`✅ Valid owner format: ${ownerId}`);
 }
 
-// Fetch Plaid Items
 async function fetchPlaidItemsByOwner(ownerId: string): Promise<string[]> {
   try {
     console.log(`Fetching Plaid items by owner: ${ownerId}`);
@@ -67,6 +65,8 @@ async function fetchPlaidItemsByOwner(ownerId: string): Promise<string[]> {
       throw new Error(`No Plaid items found for ownerId: ${ownerId}`);
     }
 
+    console.log(`✅ Found ${items.length} Plaid items for owner ${ownerId}`);
+
     return items;
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -77,7 +77,6 @@ async function fetchPlaidItemsByOwner(ownerId: string): Promise<string[]> {
   }
 }
 
-// Fetch Webhooks and Record Webhook Reception Time
 async function fetchHistoricalUpdateWebhooks(
   items: string[]
 ): Promise<string[]> {
@@ -87,7 +86,6 @@ async function fetchHistoricalUpdateWebhooks(
 
     const webhooks = items.length > 0 ? ["wh-101", "wh-102"] : [];
 
-    // Record webhook received timestamp for each item
     const now = Date.now();
     for (const item of webhooks) {
       webhookReceivedTimestamps[item] = now;
@@ -102,7 +100,6 @@ async function fetchHistoricalUpdateWebhooks(
   }
 }
 
-// Import Plaid Data with Webhook Timing
 async function importPlaidData(itemId: string): Promise<void> {
   try {
     console.log(`Importing Plaid item data (itemId = ${itemId})`);
@@ -127,12 +124,10 @@ async function importPlaidData(itemId: string): Promise<void> {
   }
 }
 
-// Wait Function
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// Process Owner Data
 async function processOwner(ownerId: string): Promise<void> {
   if (isProcessingComplete) return;
 
@@ -140,7 +135,7 @@ async function processOwner(ownerId: string): Promise<void> {
     if (!startTime) startTime = Date.now();
 
     const items = await fetchPlaidItemsByOwner(ownerId);
-    if (!items) return; // If fetching items failed completely, exit.
+    if (!items) return;
 
     const webhooks = await fetchHistoricalUpdateWebhooks(items);
 
@@ -162,7 +157,6 @@ async function processOwner(ownerId: string): Promise<void> {
   }
 }
 
-// Send Completion Email with Summary
 async function sendCompletionEmail(ownerId: string) {
   const subject = `✅ Verascore Calculation Complete for ${ownerId}`;
 
@@ -199,7 +193,7 @@ async function sendCompletionEmail(ownerId: string) {
 
 // Send Report & Exit on Critical Error
 async function sendReportAndExit(ownerId: string) {
-  const subject = `❌ Verascore Processing Failed for ${ownerId}`;
+  const subject = `❌ ${PROCESS_NAME} Failed for ${ownerId}`;
   const body = `
     ❌ The process encountered a critical error and was unable to complete.
 
@@ -210,7 +204,9 @@ async function sendReportAndExit(ownerId: string) {
   `;
 
   await sendEmail(subject, body);
-  console.error(`❌ Critical failure: Process stopping for ownerId=${ownerId}`);
+  console.error(
+    `❌ Critical failure: ${PROCESS_NAME} stopping for ownerId=${ownerId}`
+  );
   process.exit(1);
 }
 
@@ -243,7 +239,8 @@ async function main() {
       );
     }
 
-    validateOwnerId(ownerId);
+    validateOwnerIdFormatting(ownerId);
+
     console.log(`🚀 Starting Plaid worker for ownerId=${ownerId}`);
 
     timeoutHandle = setTimeout(async () => {
