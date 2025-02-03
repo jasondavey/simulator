@@ -17,9 +17,15 @@ const INTERVAL_MS = parseInt(process.env.INTERVAL_MS || "10000", 10); // Default
 // Initialize Mailgun
 const mg = mailgun({ apiKey: MAILGUN_API_KEY, domain: MAILGUN_DOMAIN });
 
-// Track processed items & errors
+// Track processed items, webhooks, and errors
 let processedItems = new Set<string>();
-let processedSummary: { itemId: string; status: string; error?: string }[] = [];
+let processedSummary: {
+  itemId: string;
+  status: string;
+  error?: string;
+  webhookDelay?: string;
+}[] = [];
+let webhookReceivedTimestamps: { [key: string]: number } = {}; // Tracks when webhooks were received
 let isProcessingComplete = false;
 let startTime: number | null = null;
 let endTime: number | null = null;
@@ -71,14 +77,23 @@ async function fetchPlaidItemsByOwner(ownerId: string): Promise<string[]> {
   }
 }
 
-// Fetch Webhooks
+// Fetch Webhooks and Record Webhook Reception Time
 async function fetchHistoricalUpdateWebhooks(
   items: string[]
 ): Promise<string[]> {
   try {
     console.log(`Fetching historical update webhooks for items: ${items}`);
     await wait(300);
-    return items.length > 0 ? ["wh-101", "wh-102"] : [];
+
+    const webhooks = items.length > 0 ? ["wh-101", "wh-102"] : [];
+
+    // Record webhook received timestamp for each item
+    const now = Date.now();
+    for (const item of webhooks) {
+      webhookReceivedTimestamps[item] = now;
+    }
+
+    return webhooks;
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     errors.push(`Error fetching webhooks: ${errorMessage}`);
@@ -87,13 +102,20 @@ async function fetchHistoricalUpdateWebhooks(
   }
 }
 
-// Import Plaid Data with Status Tracking
+// Import Plaid Data with Webhook Timing
 async function importPlaidData(itemId: string): Promise<void> {
   try {
     console.log(`Importing Plaid item data (itemId = ${itemId})`);
     await wait(500);
     processedItems.add(itemId);
-    processedSummary.push({ itemId, status: "success" });
+
+    // Calculate webhook processing delay
+    const receivedTime = webhookReceivedTimestamps[itemId] || null;
+    const webhookDelay = receivedTime
+      ? `${((Date.now() - receivedTime) / 1000).toFixed(2)} sec`
+      : "Unknown";
+
+    processedSummary.push({ itemId, status: "success", webhookDelay });
     console.log(`✅ Successfully imported data for itemId = ${itemId}`);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -147,7 +169,7 @@ async function sendCompletionEmail(ownerId: string) {
   const processedReport = processedSummary
     .map(
       (item) =>
-        `- ${item.itemId}: ${item.status.toUpperCase()}${
+        `- ${item.itemId}: ${item.status.toUpperCase()} (Webhook Delay: ${item.webhookDelay})${
           item.error ? ` (Error: ${item.error})` : ""
         }`
     )
@@ -182,16 +204,16 @@ async function sendReportAndExit(ownerId: string) {
     ❌ The process encountered a critical error and was unable to complete.
 
     🚨 Errors Encountered:
-    ${errors.join("\n")}
+    ${errors.join("\n") || "No detailed errors recorded."}
 
-    Stopping execution.
+    ❗ Stopping execution.
   `;
 
   await sendEmail(subject, body);
+  console.error(`❌ Critical failure: Process stopping for ownerId=${ownerId}`);
   process.exit(1);
 }
 
-// Send Email
 async function sendEmail(subject: string, body: string) {
   try {
     console.log(`📧 Sending email: ${subject}`);
@@ -229,14 +251,13 @@ async function main() {
       await sendReportAndExit(ownerId);
     }, TIMEOUT_MS);
 
-    // 🔹 Use INTERVAL_MS here
     const interval = setInterval(async () => {
       if (!isProcessingComplete) {
         await processOwner(ownerId);
       } else {
         clearInterval(interval);
       }
-    }, INTERVAL_MS); // ✅ Now using INTERVAL_MS
+    }, INTERVAL_MS);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     errors.push(`Fatal error: ${errorMessage}`);
