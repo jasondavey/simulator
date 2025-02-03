@@ -18,7 +18,6 @@ export class ClientRegistryDao {
     if (result.data == null) {
       throw new Error(`Client not found for client_id: ${clientId}`);
     }
-    console.log("SUCCESS: Client registry loaded from FaunaDB", result.data);
     return result.data;
   }
 

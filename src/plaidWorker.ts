@@ -174,8 +174,18 @@ async function processOwner(ownerId: string, clientId: string): Promise<void> {
 
   try {
     if (!startTime) startTime = Date.now();
+    let vsClient: VeraScoreClient;
 
-    const vsClient = fetchVsClientFromRegistry(clientId);
+    try {
+      vsClient = await fetchVsClientFromRegistry(clientId);
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      errors.push(`Error fetching VeraScore client: ${errorMessage}`);
+      console.error(`❌ ${errorMessage}`);
+      await sendReportAndExit(clientId);
+      return;
+    }
 
     const items = await fetchPlaidItemsByOwner(ownerId);
     if (!items) return;
