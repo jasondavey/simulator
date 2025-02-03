@@ -25,3 +25,23 @@ export interface VeraScoreClient {
     };
   };
 }
+
+export interface Auth0Profile {
+  user_id: string;
+  email: string;
+  username: string;
+  name: string;
+  sub: string;
+  user_metadata: {
+    firstName: string;
+    middleName: string;
+    lastName: string;
+    phoneNumber: string;
+    companyName: string;
+    licenseNumber: string;
+    address: string;
+    yearlyGrossIncome?: number;
+    ssnOrItin?: string;
+  };
+  created_at: string;
+}

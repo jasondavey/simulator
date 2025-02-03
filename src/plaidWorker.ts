@@ -1,8 +1,9 @@
 import mailgun from "mailgun-js";
 import dotenv from "dotenv";
 import { createVsParentDbConnection } from "./services/faunaService";
-import { ClientRegistryDao } from "../db/vsClientRegistryDao";
-import { VeraScoreClient } from "../db/models";
+import { ClientRegistryDao } from "./db/vsClientRegistryDao";
+import { VeraScoreClient, Auth0Profile } from "./db/models";
+import { Auth0Service } from "./services/auth0Service";
 
 dotenv.config();
 
@@ -175,6 +176,8 @@ async function processOwner(ownerId: string, clientId: string): Promise<void> {
   try {
     if (!startTime) startTime = Date.now();
     let vsClient: VeraScoreClient;
+    let userProfile: Auth0Profile;
+    let auth0UserToken: string;
 
     try {
       vsClient = await fetchVsClientFromRegistry(clientId);
@@ -184,6 +187,29 @@ async function processOwner(ownerId: string, clientId: string): Promise<void> {
       errors.push(`Error fetching VeraScore client: ${errorMessage}`);
       console.error(`❌ ${errorMessage}`);
       await sendReportAndExit(clientId);
+      return;
+    }
+
+    try {
+      auth0UserToken = await Auth0Service.getAuth0UserApiToken(vsClient);
+
+      userProfile = await Auth0Service.getUserByAuth0Id(
+        auth0UserToken,
+        ownerId,
+        vsClient.app_tenant_domain
+      );
+
+      if (!userProfile) {
+        throw new Error(`User profile not found for ownerId: ${ownerId}`);
+      }
+
+      console.log(`✅ User profile fetched: ${userProfile.name}`);
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      errors.push(`Error fetching Auth0 user profile: ${errorMessage}`);
+      console.error(`❌ ${errorMessage}`);
+      await sendReportAndExit(ownerId);
       return;
     }
 
@@ -244,7 +270,6 @@ async function sendCompletionEmail(ownerId: string) {
   await sendEmail(subject, body);
 }
 
-// Send Report & Exit on Critical Error
 async function sendReportAndExit(ownerId: string) {
   const subject = `❌ ${PROCESS_NAME} Failed for ${ownerId}`;
   const body = `
