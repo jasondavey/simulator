@@ -1,25 +1,35 @@
-import mailgun from "mailgun-js";
-import dotenv from "dotenv";
-import { createVsParentDbConnection } from "./services/faunaService";
-import { ClientRegistryDao } from "./db/vsClientRegistryDao";
-import { VeraScoreClient, Auth0Profile } from "./db/models";
-import { Auth0Service } from "./services/auth0Service";
-
+import mailgun from 'mailgun-js';
+import dotenv from 'dotenv';
+import { createVsParentDbConnection } from './services/faunaService';
+import { ClientRegistryDao } from './db/vsClientRegistryDao';
+import { VeraScoreClient, Auth0Profile } from './db/models';
+import { Auth0Service } from './services/auth0Service';
+import { ProcessContext } from './processContext';
+import { CompletionHandler } from './completionHandler';
+import { FetchAuth0UserProfileHandler } from './fetchAuth0ProfileHandler';
+import { FetchHistoricalWebhooksHandler } from './fetchHistoricalWebhooksHandler';
+import { FetchPlaidItemsHandler } from './fetchPlaidItemsHandler';
+import { FetchVsClientHandler } from './fetchVsClientHandler';
+import { ImportPlaidDataHandler } from './importPlaidDataHandler';
+import { Pipeline } from './pipeline';
+import { ValidateClientIdHandler } from './validateClientIdHandler';
+import { ValidateOwnerIdHandler } from './validateOwnerIdHandler';
+import { InitializeParentDbConnectionHandler } from './initializeParentDbConnectionHandler';
 dotenv.config();
 
 const MAILGUN_API_KEY = process.env.MAILGUN_API_KEY!;
 const MAILGUN_DOMAIN = process.env.MAILGUN_DOMAIN!;
 const RECIPIENT_EMAIL =
-  process.env.RECIPIENT_EMAIL || "platform@myverascore.com";
+  process.env.RECIPIENT_EMAIL || 'platform@myverascore.com';
 const PLATFORM_EMAIL_SENDER =
   process.env.PLATFORM_EMAIL_SENDER || `no-reply@${MAILGUN_DOMAIN}`;
-const TIMEOUT_MS = parseInt(process.env.TIMEOUT_MS || "600000", 10);
-const INTERVAL_MS = parseInt(process.env.INTERVAL_MS || "10000", 10);
+const TIMEOUT_MS = parseInt(process.env.TIMEOUT_MS || '600000', 10);
+const INTERVAL_MS = parseInt(process.env.INTERVAL_MS || '10000', 10);
 const PROCESS_NAME = process.env.PROCESS_NAME;
 const FAUNA_DATABASE_VS_PARENT_ROOT_KEY =
   process.env.FAUNA_DATABASE_VS_PARENT_ROOT_KEY!;
 if (!FAUNA_DATABASE_VS_PARENT_ROOT_KEY) {
-  throw new Error("FAUNA_DATABASE_VS_PARENT_ROOT_KEY is not defined");
+  throw new Error('FAUNA_DATABASE_VS_PARENT_ROOT_KEY is not defined');
 }
 
 const mg = mailgun({ apiKey: MAILGUN_API_KEY, domain: MAILGUN_DOMAIN });
@@ -30,26 +40,9 @@ let timeoutHandle: NodeJS.Timeout | null = null;
 let errors: string[] = [];
 
 const MOCK_VALID_AUTH0_IDS = new Set([
-  "auth0|6723a660523e8e7b009381f4",
-  "auth0|abcdef1234567890",
+  'auth0|6723a660523e8e7b009381f4',
+  'auth0|abcdef1234567890'
 ]);
-
-interface ProcessContext {
-  ownerId: string;
-  clientId: string;
-  startTime: number | null;
-  endTime: number | null;
-  auth0FetchTime: number | null;
-  processedItems: Set<string>;
-  processedSummary: {
-    itemId: string;
-    status: string;
-    error?: string;
-    webhookDelay?: string;
-  }[];
-  webhookReceivedTimestamps: { [key: string]: number };
-  errors: string[];
-}
 
 function validateOwnerIdFormatting(ownerId: string): void {
   const auth0Pattern = /^auth0\|[a-zA-Z0-9]+$/;
@@ -113,7 +106,7 @@ async function fetchPlaidItemsByOwner(
     await wait(300); // Simulating API call delay
 
     const items = MOCK_VALID_AUTH0_IDS.has(context.ownerId)
-      ? ["item-001", "item-002"]
+      ? ['item-001', 'item-002']
       : [];
 
     if (items.length === 0) {
@@ -127,9 +120,9 @@ async function fetchPlaidItemsByOwner(
     // Store success info in context
     const fetchDuration = (Date.now() - startFetchTime) / 1000;
     context.processedSummary.push({
-      itemId: "PLAID_ITEMS_FETCH",
-      status: "success",
-      webhookDelay: `${fetchDuration.toFixed(2)} sec`,
+      itemId: 'PLAID_ITEMS_FETCH',
+      status: 'success',
+      webhookDelay: `${fetchDuration.toFixed(2)} sec`
     });
 
     return items;
@@ -150,7 +143,7 @@ async function fetchHistoricalUpdateWebhooks(
     console.log(`Fetching historical update webhooks for items: ${items}`);
     await wait(300);
 
-    const webhooks = items.length > 0 ? ["wh-101", "wh-102"] : [];
+    const webhooks = items.length > 0 ? ['wh-101', 'wh-102'] : [];
 
     const now = Date.now();
     for (const item of webhooks) {
@@ -178,9 +171,9 @@ async function importPlaidData(
     const receivedTime = context.webhookReceivedTimestamps[itemId] || null;
     const webhookDelay = receivedTime
       ? `${((Date.now() - receivedTime) / 1000).toFixed(2)} sec`
-      : "Unknown";
+      : 'Unknown';
 
-    context.processedSummary.push({ itemId, status: "success", webhookDelay });
+    context.processedSummary.push({ itemId, status: 'success', webhookDelay });
     console.log(`✅ Successfully imported data for itemId = ${itemId}`);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -189,8 +182,8 @@ async function importPlaidData(
     );
     context.processedSummary.push({
       itemId,
-      status: "failure",
-      error: errorMessage,
+      status: 'failure',
+      error: errorMessage
     });
     console.error(`❌ ${errorMessage}`);
   }
@@ -268,7 +261,7 @@ async function processOwner(context: ProcessContext): Promise<void> {
       await importPlaidData(context, itemId);
     }
 
-    console.log("✅ All Plaid items processed.");
+    console.log('✅ All Plaid items processed.');
     isProcessingComplete = true;
     context.endTime = Date.now();
 
@@ -289,29 +282,29 @@ async function sendCompletionEmail(context: ProcessContext) {
     .map(
       (item) =>
         `- ${item.itemId}: ${item.status.toUpperCase()} (Webhook Delay: ${item.webhookDelay})${
-          item.error ? ` (Error: ${item.error})` : ""
+          item.error ? ` (Error: ${item.error})` : ''
         }`
     )
-    .join("\n");
+    .join('\n');
 
   const body = `
     ✅ The Plaid processing for ownerId: ${context.ownerId} has been successfully completed.
 
     Request Details:
-    - Start Time: ${context.startTime ? new Date(context.startTime).toISOString() : "Unknown"}
-    - End Time: ${context.endTime ? new Date(context.endTime).toISOString() : "Not completed"}
+    - Start Time: ${context.startTime ? new Date(context.startTime).toISOString() : 'Unknown'}
+    - End Time: ${context.endTime ? new Date(context.endTime).toISOString() : 'Not completed'}
     - Total Processing Time: ${
       context.startTime && context.endTime
         ? ((context.endTime - context.startTime) / 1000).toFixed(2)
-        : "Unknown"
+        : 'Unknown'
     } seconds
-    - Auth0 Profile Fetch Time: ${context.auth0FetchTime ? context.auth0FetchTime.toFixed(2) : "Unknown"} seconds
+    - Auth0 Profile Fetch Time: ${context.auth0FetchTime ? context.auth0FetchTime.toFixed(2) : 'Unknown'} seconds
 
     📋 **Processing Summary**
-    ${processedReport || "No items processed."}
+    ${processedReport || 'No items processed.'}
 
     🚨 **Errors Encountered**
-    ${context.errors.length > 0 ? context.errors.join("\n") : "No errors occurred."}
+    ${context.errors.length > 0 ? context.errors.join('\n') : 'No errors occurred.'}
   `;
 
   await sendEmail(subject, body);
@@ -323,7 +316,7 @@ async function sendReportAndExit(context: ProcessContext) {
     ❌ The process encountered a critical error and was unable to complete.
 
     🚨 Errors Encountered:
-    ${context.errors.join("\n") || "No detailed errors recorded."}
+    ${context.errors.join('\n') || 'No detailed errors recorded.'}
 
     ❗ Stopping execution.
   `;
@@ -343,16 +336,15 @@ async function sendEmail(subject: string, body: string) {
       from: `Verascore Platform <${PLATFORM_EMAIL_SENDER}>`,
       to: RECIPIENT_EMAIL,
       subject,
-      text: body,
+      text: body
     };
 
     await mg.messages().send(emailData);
-    console.log("✅ Email sent successfully.");
+    console.log('✅ Email sent successfully.');
   } catch (error) {
-    console.error("❌ Failed to send email:", error);
+    console.error('❌ Failed to send email:', error);
   }
 }
-
 async function main() {
   try {
     const ownerId = process.argv[2];
@@ -360,56 +352,72 @@ async function main() {
 
     if (!ownerId) {
       throw new Error(
-        "Missing ownerId argument. Please provide a valid Auth0 ID."
+        'Missing ownerId argument. Please provide a valid Auth0 ID.'
       );
     }
 
     if (!clientId) {
       throw new Error(
-        "Missing clientId argument. Please provide a valid VeraScore client ID."
+        'Missing clientId argument. Please provide a valid VeraScore client ID.'
       );
     }
 
-    validateOwnerIdFormatting(ownerId);
-    validateClientIdFormatting(clientId);
-
     console.log(`🚀 Starting Plaid worker for ownerId=${ownerId}`);
 
+    // Initialize context
     const context: ProcessContext = {
       ownerId,
       clientId,
-      startTime: null,
+      startTime: Date.now(),
       endTime: null,
       auth0FetchTime: null,
       processedItems: new Set<string>(),
       processedSummary: [],
       webhookReceivedTimestamps: {},
       errors: [],
+      parentDbConnection: null,
+      vsClient: null
     };
 
-    context.startTime = Date.now(); // Start tracking
-
+    // Timeout handler
     timeoutHandle = setTimeout(async () => {
-      context.errors.push("⏳ Process timed out!");
+      context.errors.push('⏳ Process timed out!');
       await sendReportAndExit(context);
     }, TIMEOUT_MS);
 
-    const interval = setInterval(async () => {
-      if (!isProcessingComplete) {
-        await processOwner(context);
-      } else {
-        clearInterval(interval);
-      }
-    }, INTERVAL_MS);
+    const pipeline = new Pipeline()
+      .use(new ValidateOwnerIdHandler())
+      .use(new ValidateClientIdHandler())
+      .use(new InitializeParentDbConnectionHandler())
+      .use(new FetchVsClientHandler())
+      .use(new FetchAuth0UserProfileHandler())
+      .use(new FetchPlaidItemsHandler())
+      .use(new FetchHistoricalWebhooksHandler())
+      .use(new ImportPlaidDataHandler())
+      .use(new CompletionHandler());
+
+    // Execute pipeline
+    await pipeline.execute(context);
+
+    isProcessingComplete = true;
+    if (timeoutHandle) clearTimeout(timeoutHandle);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    errors.push(`Fatal error: ${errorMessage}`);
-    console.error(`❌ Fatal error: ${errorMessage}`);
+    errors.push(`Fatal error in main: ${errorMessage}`);
+    console.error(`❌ Fatal error in main: ${errorMessage}`);
     await sendReportAndExit({
-      ownerId: "unknown",
-      clientId: "unknown",
-      errors: [errorMessage],
-    } as ProcessContext);
+      ownerId: 'unknown',
+      clientId: 'unknown',
+      startTime: null,
+      endTime: null,
+      auth0FetchTime: null,
+      processedItems: new Set<string>(),
+      processedSummary: [],
+      webhookReceivedTimestamps: {},
+      errors,
+      parentDbConnection: null,
+      vsClient: null
+    });
   }
 }
 
