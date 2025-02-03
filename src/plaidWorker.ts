@@ -1,5 +1,8 @@
 import mailgun from "mailgun-js";
 import dotenv from "dotenv";
+import { createVsParentDbConnection } from "./services/faunaService";
+import { ClientRegistryDao } from "../db/vsClientRegistryDao";
+import { VeraScoreClient } from "../db/models";
 
 dotenv.config();
 
@@ -12,6 +15,11 @@ const PLATFORM_EMAIL_SENDER =
 const TIMEOUT_MS = parseInt(process.env.TIMEOUT_MS || "600000", 10);
 const INTERVAL_MS = parseInt(process.env.INTERVAL_MS || "10000", 10);
 const PROCESS_NAME = process.env.PROCESS_NAME;
+const FAUNA_DATABASE_VS_PARENT_ROOT_KEY =
+  process.env.FAUNA_DATABASE_VS_PARENT_ROOT_KEY!;
+if (!FAUNA_DATABASE_VS_PARENT_ROOT_KEY) {
+  throw new Error("FAUNA_DATABASE_VS_PARENT_ROOT_KEY is not defined");
+}
 
 const mg = mailgun({ apiKey: MAILGUN_API_KEY, domain: MAILGUN_DOMAIN });
 
@@ -29,13 +37,11 @@ let endTime: number | null = null;
 let timeoutHandle: NodeJS.Timeout | null = null;
 let errors: string[] = [];
 
-// Mock Database of Valid Owner IDs
 const MOCK_VALID_AUTH0_IDS = new Set([
   "auth0|6723a660523e8e7b009381f4",
   "auth0|abcdef1234567890",
 ]);
 
-// Validate Owner ID formatting
 function validateOwnerIdFormatting(ownerId: string): void {
   const auth0Pattern = /^auth0\|[a-zA-Z0-9]+$/;
 
@@ -50,6 +56,42 @@ function validateOwnerIdFormatting(ownerId: string): void {
   }
 
   console.log(`✅ Valid owner format: ${ownerId}`);
+}
+
+function validateClientIdFormatting(clientId: string): void {
+  const guidPattern =
+    /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/;
+
+  if (!guidPattern.test(clientId)) {
+    throw new Error(
+      `Invalid VeraScore Client ID format: ${clientId}. Must be guid.`
+    );
+  }
+
+  console.log(`✅ Valid client format: ${clientId}`);
+}
+
+async function fetchVsClientFromRegistry(
+  clientId: string
+): Promise<VeraScoreClient> {
+  try {
+    console.log(`Fetching client by id: ${clientId}`);
+
+    const parentDbConnection = await createVsParentDbConnection(
+      FAUNA_DATABASE_VS_PARENT_ROOT_KEY
+    );
+
+    const client = await ClientRegistryDao.getClientByIdActiveOnly(
+      parentDbConnection,
+      clientId
+    );
+    console.info("VeraScore Client:", client);
+    return client;
+  } catch (error) {
+    throw new Error(
+      `Failed to connect to client registry. ${(error as Error).message}`
+    );
+  }
 }
 
 async function fetchPlaidItemsByOwner(ownerId: string): Promise<string[]> {
@@ -106,7 +148,6 @@ async function importPlaidData(itemId: string): Promise<void> {
     await wait(500);
     processedItems.add(itemId);
 
-    // Calculate webhook processing delay
     const receivedTime = webhookReceivedTimestamps[itemId] || null;
     const webhookDelay = receivedTime
       ? `${((Date.now() - receivedTime) / 1000).toFixed(2)} sec`
@@ -128,11 +169,13 @@ function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function processOwner(ownerId: string): Promise<void> {
+async function processOwner(ownerId: string, clientId: string): Promise<void> {
   if (isProcessingComplete) return;
 
   try {
     if (!startTime) startTime = Date.now();
+
+    const vsClient = fetchVsClientFromRegistry(clientId);
 
     const items = await fetchPlaidItemsByOwner(ownerId);
     if (!items) return;
@@ -232,6 +275,7 @@ async function sendEmail(subject: string, body: string) {
 async function main() {
   try {
     const ownerId = process.argv[2];
+    const clientId = process.argv[3];
 
     if (!ownerId) {
       throw new Error(
@@ -239,7 +283,14 @@ async function main() {
       );
     }
 
+    if (!clientId) {
+      throw new Error(
+        "Missing clientId argument. Please provide a valid VeraScore client ID."
+      );
+    }
+
     validateOwnerIdFormatting(ownerId);
+    validateClientIdFormatting(clientId);
 
     console.log(`🚀 Starting Plaid worker for ownerId=${ownerId}`);
 
@@ -250,7 +301,7 @@ async function main() {
 
     const interval = setInterval(async () => {
       if (!isProcessingComplete) {
-        await processOwner(ownerId);
+        await processOwner(ownerId, clientId);
       } else {
         clearInterval(interval);
       }
