@@ -170,6 +170,41 @@ function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function fetchAuth0UserProfile(
+  ownerId: string,
+  vsClient: VeraScoreClient
+): Promise<{ profile: Auth0Profile; duration: number }> {
+  try {
+    console.log(`Fetching Auth0 user profile for ownerId: ${ownerId}`);
+    const startFetchTime = Date.now();
+
+    const auth0UserToken = await Auth0Service.getAuth0UserApiToken(vsClient);
+
+    const userProfile = await Auth0Service.getUserByAuth0Id(
+      auth0UserToken,
+      ownerId,
+      vsClient.app_tenant_domain
+    );
+
+    if (!userProfile) {
+      throw new Error(`User profile not found for ownerId: ${ownerId}`);
+    }
+
+    const duration = (Date.now() - startFetchTime) / 1000;
+    console.log(
+      `✅ Auth0 user profile fetched in ${duration.toFixed(2)} seconds`
+    );
+
+    return { profile: userProfile, duration };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    errors.push(`Error fetching Auth0 user profile: ${errorMessage}`);
+    console.error(`❌ ${errorMessage}`);
+    await sendReportAndExit(ownerId);
+    throw error;
+  }
+}
+
 async function processOwner(ownerId: string, clientId: string): Promise<void> {
   if (isProcessingComplete) return;
 
@@ -178,6 +213,7 @@ async function processOwner(ownerId: string, clientId: string): Promise<void> {
     let vsClient: VeraScoreClient;
     let userProfile: Auth0Profile;
     let auth0UserToken: string;
+    let auth0FetchDuration: number;
 
     try {
       vsClient = await fetchVsClientFromRegistry(clientId);
@@ -191,28 +227,14 @@ async function processOwner(ownerId: string, clientId: string): Promise<void> {
     }
 
     try {
-      auth0UserToken = await Auth0Service.getAuth0UserApiToken(vsClient);
-
-      userProfile = await Auth0Service.getUserByAuth0Id(
-        auth0UserToken,
-        ownerId,
-        vsClient.app_tenant_domain
-      );
-
-      if (!userProfile) {
-        throw new Error(`User profile not found for ownerId: ${ownerId}`);
-      }
-
-      console.log(`✅ User profile fetched: ${userProfile.name}`);
+      const auth0Result = await fetchAuth0UserProfile(ownerId, vsClient);
+      userProfile = auth0Result.profile;
+      auth0FetchDuration = auth0Result.duration;
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      errors.push(`Error fetching Auth0 user profile: ${errorMessage}`);
-      console.error(`❌ ${errorMessage}`);
-      await sendReportAndExit(ownerId);
       return;
     }
 
+    console.log(`✅ User profile fetched: ${userProfile.name}`);
     const items = await fetchPlaidItemsByOwner(ownerId);
     if (!items) return;
 
@@ -228,7 +250,7 @@ async function processOwner(ownerId: string, clientId: string): Promise<void> {
 
     if (timeoutHandle) clearTimeout(timeoutHandle);
 
-    await sendCompletionEmail(ownerId);
+    await sendCompletionEmail(ownerId, auth0FetchDuration);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     errors.push(`Process Owner Error: ${errorMessage}`);
@@ -236,7 +258,10 @@ async function processOwner(ownerId: string, clientId: string): Promise<void> {
   }
 }
 
-async function sendCompletionEmail(ownerId: string) {
+async function sendCompletionEmail(
+  ownerId: string,
+  auth0FetchDuration: number
+) {
   const subject = `✅ Verascore Calculation Complete for ${ownerId}`;
 
   const processedReport = processedSummary
@@ -259,6 +284,7 @@ async function sendCompletionEmail(ownerId: string) {
         ? ((endTime - startTime) / 1000).toFixed(2)
         : "Unknown"
     } seconds
+    - Auth0 Profile Fetch Time: ${auth0FetchDuration.toFixed(2)} seconds
 
     📋 **Processing Summary**
     ${processedReport || "No items processed."}
