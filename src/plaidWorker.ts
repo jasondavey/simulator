@@ -1,8 +1,7 @@
-#!/usr/bin/env ts-node
 import mailgun from "mailgun-js";
 import dotenv from "dotenv";
 
-dotenv.config(); // Load environment variables
+dotenv.config();
 
 // Load Configurations
 const MAILGUN_API_KEY = process.env.MAILGUN_API_KEY!;
@@ -15,7 +14,6 @@ const TIMEOUT_MS = parseInt(process.env.TIMEOUT_MS || "600000", 10); // Default:
 const INTERVAL_MS = parseInt(process.env.INTERVAL_MS || "10000", 10); // Default: 10 sec
 const PROCESS_NAME = process.env.PROCESS_NAME;
 
-// Initialize Mailgun
 const mg = mailgun({ apiKey: MAILGUN_API_KEY, domain: MAILGUN_DOMAIN });
 
 interface PlaidItem {
