@@ -43,6 +43,23 @@ const MOCK_VALID_AUTH0_IDS = new Set([
   "auth0|abcdef1234567890",
 ]);
 
+interface ProcessContext {
+  ownerId: string;
+  clientId: string;
+  startTime: number | null;
+  endTime: number | null;
+  auth0FetchTime: number | null;
+  processedItems: Set<string>;
+  processedSummary: {
+    itemId: string;
+    status: string;
+    error?: string;
+    webhookDelay?: string;
+  }[];
+  webhookReceivedTimestamps: { [key: string]: number };
+  errors: string[];
+}
+
 function validateOwnerIdFormatting(ownerId: string): void {
   const auth0Pattern = /^auth0\|[a-zA-Z0-9]+$/;
 
@@ -95,27 +112,42 @@ async function fetchVsClientFromRegistry(
   }
 }
 
-async function fetchPlaidItemsByOwner(ownerId: string): Promise<string[]> {
+async function fetchPlaidItemsByOwner(
+  context: ProcessContext
+): Promise<string[]> {
   try {
-    console.log(`Fetching Plaid items by owner: ${ownerId}`);
-    await wait(300);
+    console.log(`Fetching Plaid items by owner: ${context.ownerId}`);
+    const startFetchTime = Date.now();
 
-    const items = MOCK_VALID_AUTH0_IDS.has(ownerId)
+    await wait(300); // Simulating API call delay
+
+    const items = MOCK_VALID_AUTH0_IDS.has(context.ownerId)
       ? ["item-001", "item-002"]
       : [];
 
     if (items.length === 0) {
-      throw new Error(`No Plaid items found for ownerId: ${ownerId}`);
+      throw new Error(`No Plaid items found for ownerId: ${context.ownerId}`);
     }
 
-    console.log(`✅ Found ${items.length} Plaid items for owner ${ownerId}`);
+    console.log(
+      `✅ Found ${items.length} Plaid items for owner ${context.ownerId}`
+    );
+
+    // Store success info in context
+    const fetchDuration = (Date.now() - startFetchTime) / 1000;
+    context.processedSummary.push({
+      itemId: "PLAID_ITEMS_FETCH",
+      status: "success",
+      webhookDelay: `${fetchDuration.toFixed(2)} sec`,
+    });
 
     return items;
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    errors.push(`Error fetching Plaid items: ${errorMessage}`);
+    context.errors.push(`Error fetching Plaid items: ${errorMessage}`);
     console.error(`❌ ${errorMessage}`);
-    await sendReportAndExit(ownerId);
+
+    await sendReportAndExit(context); // Exit process if fetching Plaid items fails
     return [];
   }
 }
@@ -143,25 +175,32 @@ async function fetchHistoricalUpdateWebhooks(
   }
 }
 
-async function importPlaidData(itemId: string): Promise<void> {
+async function importPlaidData(
+  context: ProcessContext,
+  itemId: string
+): Promise<void> {
   try {
     console.log(`Importing Plaid item data (itemId = ${itemId})`);
     await wait(200);
-    processedItems.add(itemId);
+    context.processedItems.add(itemId);
 
-    const receivedTime = webhookReceivedTimestamps[itemId] || null;
+    const receivedTime = context.webhookReceivedTimestamps[itemId] || null;
     const webhookDelay = receivedTime
       ? `${((Date.now() - receivedTime) / 1000).toFixed(2)} sec`
       : "Unknown";
 
-    processedSummary.push({ itemId, status: "success", webhookDelay });
+    context.processedSummary.push({ itemId, status: "success", webhookDelay });
     console.log(`✅ Successfully imported data for itemId = ${itemId}`);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    errors.push(
+    context.errors.push(
       `Error importing Plaid data for itemId ${itemId}: ${errorMessage}`
     );
-    processedSummary.push({ itemId, status: "failure", error: errorMessage });
+    context.processedSummary.push({
+      itemId,
+      status: "failure",
+      error: errorMessage,
+    });
     console.error(`❌ ${errorMessage}`);
   }
 }
@@ -171,100 +210,91 @@ function wait(ms: number): Promise<void> {
 }
 
 async function fetchAuth0UserProfile(
-  ownerId: string,
+  context: ProcessContext,
   vsClient: VeraScoreClient
-): Promise<{ profile: Auth0Profile; duration: number }> {
+): Promise<Auth0Profile> {
   try {
-    console.log(`Fetching Auth0 user profile for ownerId: ${ownerId}`);
+    console.log(`Fetching Auth0 user profile for ownerId: ${context.ownerId}`);
     const startFetchTime = Date.now();
 
     const auth0UserToken = await Auth0Service.getAuth0UserApiToken(vsClient);
 
     const userProfile = await Auth0Service.getUserByAuth0Id(
       auth0UserToken,
-      ownerId,
+      context.ownerId,
       vsClient.app_tenant_domain
     );
 
     if (!userProfile) {
-      throw new Error(`User profile not found for ownerId: ${ownerId}`);
+      throw new Error(`User profile not found for ownerId: ${context.ownerId}`);
     }
 
-    const duration = (Date.now() - startFetchTime) / 1000;
-    console.log(
-      `✅ Auth0 user profile fetched in ${duration.toFixed(2)} seconds`
-    );
+    // Store duration in context
+    context.auth0FetchTime = (Date.now() - startFetchTime) / 1000;
 
-    return { profile: userProfile, duration };
+    console.log(
+      `✅ Auth0 user profile fetched in ${context.auth0FetchTime.toFixed(2)} seconds`
+    );
+    return userProfile;
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    errors.push(`Error fetching Auth0 user profile: ${errorMessage}`);
+    context.errors.push(`Error fetching Auth0 user profile: ${errorMessage}`);
     console.error(`❌ ${errorMessage}`);
-    await sendReportAndExit(ownerId);
+
+    await sendReportAndExit(context); // Exit process if Auth0 profile fetch fails
     throw error;
   }
 }
 
-async function processOwner(ownerId: string, clientId: string): Promise<void> {
+async function processOwner(context: ProcessContext): Promise<void> {
   if (isProcessingComplete) return;
 
   try {
-    if (!startTime) startTime = Date.now();
     let vsClient: VeraScoreClient;
     let userProfile: Auth0Profile;
-    let auth0UserToken: string;
-    let auth0FetchDuration: number;
 
     try {
-      vsClient = await fetchVsClientFromRegistry(clientId);
+      vsClient = await fetchVsClientFromRegistry(context.clientId);
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
-      errors.push(`Error fetching VeraScore client: ${errorMessage}`);
+      context.errors.push(`Error fetching VeraScore client: ${errorMessage}`);
       console.error(`❌ ${errorMessage}`);
-      await sendReportAndExit(clientId);
+      await sendReportAndExit(context);
       return;
     }
 
-    try {
-      const auth0Result = await fetchAuth0UserProfile(ownerId, vsClient);
-      userProfile = auth0Result.profile;
-      auth0FetchDuration = auth0Result.duration;
-    } catch (error) {
-      return;
-    }
+    userProfile = await fetchAuth0UserProfile(context, vsClient);
 
     console.log(`✅ User profile fetched: ${userProfile.name}`);
-    const items = await fetchPlaidItemsByOwner(ownerId);
+
+    const items = await fetchPlaidItemsByOwner(context);
     if (!items) return;
 
     const webhooks = await fetchHistoricalUpdateWebhooks(items);
 
     for (const itemId of webhooks) {
-      await importPlaidData(itemId);
+      await importPlaidData(context, itemId);
     }
 
     console.log("✅ All Plaid items processed.");
     isProcessingComplete = true;
-    endTime = Date.now();
+    context.endTime = Date.now();
 
     if (timeoutHandle) clearTimeout(timeoutHandle);
 
-    await sendCompletionEmail(ownerId, auth0FetchDuration);
+    await sendCompletionEmail(context);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    errors.push(`Process Owner Error: ${errorMessage}`);
+    context.errors.push(`Process Owner Error: ${errorMessage}`);
     console.error(`❌ ${errorMessage}`);
   }
 }
 
-async function sendCompletionEmail(
-  ownerId: string,
-  auth0FetchDuration: number
-) {
-  const subject = `✅ Verascore Calculation Complete for ${ownerId}`;
+async function sendCompletionEmail(context: ProcessContext) {
+  const subject = `✅ Verascore Calculation Complete for ${context.ownerId}`;
 
-  const processedReport = processedSummary
+  const processedReport = context.processedSummary
     .map(
       (item) =>
         `- ${item.itemId}: ${item.status.toUpperCase()} (Webhook Delay: ${item.webhookDelay})${
@@ -274,42 +304,42 @@ async function sendCompletionEmail(
     .join("\n");
 
   const body = `
-    ✅ The Plaid processing for ownerId: ${ownerId} has been successfully completed.
+    ✅ The Plaid processing for ownerId: ${context.ownerId} has been successfully completed.
 
     Request Details:
-    - Start Time: ${startTime ? new Date(startTime).toISOString() : "Unknown"}
-    - End Time: ${endTime ? new Date(endTime).toISOString() : "Not completed"}
+    - Start Time: ${context.startTime ? new Date(context.startTime).toISOString() : "Unknown"}
+    - End Time: ${context.endTime ? new Date(context.endTime).toISOString() : "Not completed"}
     - Total Processing Time: ${
-      startTime && endTime
-        ? ((endTime - startTime) / 1000).toFixed(2)
+      context.startTime && context.endTime
+        ? ((context.endTime - context.startTime) / 1000).toFixed(2)
         : "Unknown"
     } seconds
-    - Auth0 Profile Fetch Time: ${auth0FetchDuration.toFixed(2)} seconds
+    - Auth0 Profile Fetch Time: ${context.auth0FetchTime ? context.auth0FetchTime.toFixed(2) : "Unknown"} seconds
 
     📋 **Processing Summary**
     ${processedReport || "No items processed."}
 
     🚨 **Errors Encountered**
-    ${errors.length > 0 ? errors.join("\n") : "No errors occurred."}
+    ${context.errors.length > 0 ? context.errors.join("\n") : "No errors occurred."}
   `;
 
   await sendEmail(subject, body);
 }
 
-async function sendReportAndExit(ownerId: string) {
-  const subject = `❌ ${PROCESS_NAME} Failed for ${ownerId}`;
+async function sendReportAndExit(context: ProcessContext) {
+  const subject = `❌ ${PROCESS_NAME} Failed for ${context.ownerId}`;
   const body = `
     ❌ The process encountered a critical error and was unable to complete.
 
     🚨 Errors Encountered:
-    ${errors.join("\n") || "No detailed errors recorded."}
+    ${context.errors.join("\n") || "No detailed errors recorded."}
 
     ❗ Stopping execution.
   `;
 
   await sendEmail(subject, body);
   console.error(
-    `❌ Critical failure: ${PROCESS_NAME} stopping for ownerId=${ownerId}`
+    `❌ Critical failure: ${PROCESS_NAME} stopping for ownerId=${context.ownerId}`
   );
   process.exit(1);
 }
@@ -332,7 +362,6 @@ async function sendEmail(subject: string, body: string) {
   }
 }
 
-// Main Execution
 async function main() {
   try {
     const ownerId = process.argv[2];
@@ -355,14 +384,28 @@ async function main() {
 
     console.log(`🚀 Starting Plaid worker for ownerId=${ownerId}`);
 
+    const context: ProcessContext = {
+      ownerId,
+      clientId,
+      startTime: null,
+      endTime: null,
+      auth0FetchTime: null,
+      processedItems: new Set<string>(),
+      processedSummary: [],
+      webhookReceivedTimestamps: {},
+      errors: [],
+    };
+
+    context.startTime = Date.now(); // Start tracking
+
     timeoutHandle = setTimeout(async () => {
-      errors.push("⏳ Process timed out!");
-      await sendReportAndExit(ownerId);
+      context.errors.push("⏳ Process timed out!");
+      await sendReportAndExit(context);
     }, TIMEOUT_MS);
 
     const interval = setInterval(async () => {
       if (!isProcessingComplete) {
-        await processOwner(ownerId, clientId);
+        await processOwner(context);
       } else {
         clearInterval(interval);
       }
@@ -371,7 +414,11 @@ async function main() {
     const errorMessage = error instanceof Error ? error.message : String(error);
     errors.push(`Fatal error: ${errorMessage}`);
     console.error(`❌ Fatal error: ${errorMessage}`);
-    await sendReportAndExit("unknown");
+    await sendReportAndExit({
+      ownerId: "unknown",
+      clientId: "unknown",
+      errors: [errorMessage],
+    } as ProcessContext);
   }
 }
 
