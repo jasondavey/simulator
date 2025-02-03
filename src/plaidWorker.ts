@@ -85,7 +85,7 @@ async function fetchVsClientFromRegistry(
       parentDbConnection,
       clientId
     );
-    console.info("VeraScore Client:", client);
+    console.info(`✅ VeraScore Client Fetched: ${client.partner_name}`);
     return client;
   } catch (error) {
     throw new Error(
@@ -145,7 +145,7 @@ async function fetchHistoricalUpdateWebhooks(
 async function importPlaidData(itemId: string): Promise<void> {
   try {
     console.log(`Importing Plaid item data (itemId = ${itemId})`);
-    await wait(500);
+    await wait(200);
     processedItems.add(itemId);
 
     const receivedTime = webhookReceivedTimestamps[itemId] || null;
