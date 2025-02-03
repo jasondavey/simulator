@@ -229,7 +229,14 @@ async function main() {
       await sendReportAndExit(ownerId);
     }, TIMEOUT_MS);
 
-    await processOwner(ownerId);
+    // 🔹 Use INTERVAL_MS here
+    const interval = setInterval(async () => {
+      if (!isProcessingComplete) {
+        await processOwner(ownerId);
+      } else {
+        clearInterval(interval);
+      }
+    }, INTERVAL_MS); // ✅ Now using INTERVAL_MS
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     errors.push(`Fatal error: ${errorMessage}`);
