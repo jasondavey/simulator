@@ -24,17 +24,8 @@ if (!FAUNA_DATABASE_VS_PARENT_ROOT_KEY) {
 
 const mg = mailgun({ apiKey: MAILGUN_API_KEY, domain: MAILGUN_DOMAIN });
 
-let processedItems = new Set<string>();
-let processedSummary: {
-  itemId: string;
-  status: string;
-  error?: string;
-  webhookDelay?: string;
-}[] = [];
 let webhookReceivedTimestamps: { [key: string]: number } = {}; // Tracks when webhooks were received
 let isProcessingComplete = false;
-let startTime: number | null = null;
-let endTime: number | null = null;
 let timeoutHandle: NodeJS.Timeout | null = null;
 let errors: string[] = [];
 
