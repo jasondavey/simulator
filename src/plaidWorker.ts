@@ -1,7 +1,8 @@
+#!/usr/bin/env ts-node
 import mailgun from "mailgun-js";
 import dotenv from "dotenv";
 
-dotenv.config();
+dotenv.config(); // Load environment variables
 
 // Load Configurations
 const MAILGUN_API_KEY = process.env.MAILGUN_API_KEY!;
@@ -12,41 +13,26 @@ const PLATFORM_EMAIL_SENDER =
   process.env.PLATFORM_EMAIL_SENDER || `no-reply@${MAILGUN_DOMAIN}`;
 const TIMEOUT_MS = parseInt(process.env.TIMEOUT_MS || "600000", 10); // Default: 10 min
 const INTERVAL_MS = parseInt(process.env.INTERVAL_MS || "10000", 10); // Default: 10 sec
-const PROCESS_NAME = process.env.PROCESS_NAME;
 
+// Initialize Mailgun
 const mg = mailgun({ apiKey: MAILGUN_API_KEY, domain: MAILGUN_DOMAIN });
 
-interface PlaidItem {
-  id: string;
-  ownerId: string;
-}
-
-interface PlaidWebhook {
-  id: string;
-  itemId: string;
-  webhookType: string;
-}
-
-// Mock Data
-const MOCK_PLAID_ITEMS: PlaidItem[] = [
-  { id: "item-001", ownerId: "auth0|6723a660523e8e7b009381f4" },
-  { id: "item-002", ownerId: "auth0|6723a660523e8e7b009381f4" },
-  { id: "item-003", ownerId: "auth0|6723a660523e8e7b009381f4" },
-];
-
-const MOCK_WEBHOOKS: PlaidWebhook[] = [
-  { id: "wh-101", itemId: "item-001", webhookType: "historical update" },
-  { id: "wh-102", itemId: "item-002", webhookType: "historical update" },
-  { id: "wh-103", itemId: "item-003", webhookType: "historical update" },
-];
-
-// Track processed items
+// Track processed items & errors
 let processedItems = new Set<string>();
+let processedSummary: { itemId: string; status: string; error?: string }[] = [];
 let isProcessingComplete = false;
 let startTime: number | null = null;
 let endTime: number | null = null;
 let timeoutHandle: NodeJS.Timeout | null = null;
+let errors: string[] = [];
 
+// Mock Database of Valid Owner IDs
+const MOCK_VALID_AUTH0_IDS = new Set([
+  "auth0|6723a660523e8e7b009381f4",
+  "auth0|abcdef1234567890",
+]);
+
+// Validate Owner ID
 function validateOwnerId(ownerId: string): void {
   const auth0Pattern = /^auth0\|[a-zA-Z0-9]+$/;
 
@@ -55,65 +41,76 @@ function validateOwnerId(ownerId: string): void {
       `Invalid Auth0 ID format: ${ownerId}. Must follow 'auth0|xxxxxxxx' format.`
     );
   }
+
+  if (!MOCK_VALID_AUTH0_IDS.has(ownerId)) {
+    throw new Error(`Auth0 ID ${ownerId} does not exist.`);
+  }
 }
 
-async function fetchPlaidItemsByOwner(ownerId: string): Promise<PlaidItem[]> {
+// Fetch Plaid Items
+async function fetchPlaidItemsByOwner(ownerId: string): Promise<string[]> {
   try {
-    console.log(`fetch plaid items by owner: ${ownerId}`);
+    console.log(`Fetching Plaid items by owner: ${ownerId}`);
     await wait(300);
 
-    const items = MOCK_PLAID_ITEMS.filter((item) => item.ownerId === ownerId);
+    const items = MOCK_VALID_AUTH0_IDS.has(ownerId)
+      ? ["item-001", "item-002"]
+      : [];
 
     if (items.length === 0) {
-      throw new Error(`❌ No Plaid items found for ownerId: ${ownerId}`);
+      throw new Error(`No Plaid items found for ownerId: ${ownerId}`);
     }
 
     return items;
   } catch (error) {
-    console.error("Error fetching Plaid items:", error);
-    await sendErrorEmail("Error Fetching Plaid Items", error, { ownerId });
-    process.exit(1);
-  }
-}
-
-async function fetchHistoricalUpdateWebhooks(
-  items: PlaidItem[]
-): Promise<PlaidWebhook[]> {
-  try {
-    console.log(
-      'fetch all webhooks that are type "historical updates" by those items'
-    );
-    const itemIds = items.map((i) => i.id);
-    await wait(300);
-    return MOCK_WEBHOOKS.filter(
-      (wh) =>
-        itemIds.includes(wh.itemId) && wh.webhookType === "historical update"
-    );
-  } catch (error) {
-    console.error("Error fetching webhooks:", error);
-    await sendErrorEmail("Error Fetching Webhooks", error, {});
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    errors.push(`Error fetching Plaid items: ${errorMessage}`);
+    console.error(`❌ ${errorMessage}`);
+    await sendReportAndExit(ownerId);
     return [];
   }
 }
 
-async function importPlaidData(itemId: string): Promise<void> {
+// Fetch Webhooks
+async function fetchHistoricalUpdateWebhooks(
+  items: string[]
+): Promise<string[]> {
   try {
-    console.log(
-      `if webhook available, import plaid item data (itemId = ${itemId}) into our database`
-    );
-    await wait(500);
-    console.log(`Imported data for itemId = ${itemId} successfully.`);
-    processedItems.add(itemId);
+    console.log(`Fetching historical update webhooks for items: ${items}`);
+    await wait(300);
+    return items.length > 0 ? ["wh-101", "wh-102"] : [];
   } catch (error) {
-    console.error(`Error importing Plaid data for itemId ${itemId}:`, error);
-    await sendErrorEmail("Error Importing Plaid Data", error, { itemId });
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    errors.push(`Error fetching webhooks: ${errorMessage}`);
+    console.error(`❌ ${errorMessage}`);
+    return [];
   }
 }
 
+// Import Plaid Data with Status Tracking
+async function importPlaidData(itemId: string): Promise<void> {
+  try {
+    console.log(`Importing Plaid item data (itemId = ${itemId})`);
+    await wait(500);
+    processedItems.add(itemId);
+    processedSummary.push({ itemId, status: "success" });
+    console.log(`✅ Successfully imported data for itemId = ${itemId}`);
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    errors.push(
+      `Error importing Plaid data for itemId ${itemId}: ${errorMessage}`
+    );
+    processedSummary.push({ itemId, status: "failure", error: errorMessage });
+    console.error(`❌ ${errorMessage}`);
+  }
+}
+
+// Wait Function
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Process Owner Data
 async function processOwner(ownerId: string): Promise<void> {
   if (isProcessingComplete) return;
 
@@ -121,52 +118,83 @@ async function processOwner(ownerId: string): Promise<void> {
     if (!startTime) startTime = Date.now();
 
     const items = await fetchPlaidItemsByOwner(ownerId);
+    if (!items) return; // If fetching items failed completely, exit.
+
     const webhooks = await fetchHistoricalUpdateWebhooks(items);
 
-    const pendingItems = webhooks
-      .filter((wh) => !processedItems.has(wh.itemId))
-      .map((wh) => wh.itemId);
-
-    if (pendingItems.length === 0) {
-      console.log("All Plaid items have been processed.");
-      isProcessingComplete = true;
-      endTime = Date.now();
-
-      if (timeoutHandle) clearTimeout(timeoutHandle);
-
-      if (startTime && endTime) {
-        console.log(
-          `Total processing time: ${(endTime - startTime) / 1000} seconds`
-        );
-      }
-
-      await sendCompletionEmail(ownerId);
-      startVeraScorerProcess();
-      return;
-    }
-
-    for (const itemId of pendingItems) {
+    for (const itemId of webhooks) {
       await importPlaidData(itemId);
     }
 
-    console.log(
-      "keep going until all items with webhooks have been completed\n"
-    );
+    console.log("✅ All Plaid items processed.");
+    isProcessingComplete = true;
+    endTime = Date.now();
+
+    if (timeoutHandle) clearTimeout(timeoutHandle);
+
+    await sendCompletionEmail(ownerId);
   } catch (error) {
-    console.error("Error in processOwner:", error);
-    await sendErrorEmail("Process Owner Error", error, { ownerId });
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    errors.push(`Process Owner Error: ${errorMessage}`);
+    console.error(`❌ ${errorMessage}`);
   }
 }
 
-function startVeraScorerProcess(): void {
-  console.log(`=== Start  ${PROCESS_NAME} Process ===`);
-  console.log("Running VeraScorer process...");
-  console.log("VeraScorer process completed.");
+// Send Completion Email with Summary
+async function sendCompletionEmail(ownerId: string) {
+  const subject = `✅ Verascore Calculation Complete for ${ownerId}`;
+
+  const processedReport = processedSummary
+    .map(
+      (item) =>
+        `- ${item.itemId}: ${item.status.toUpperCase()}${
+          item.error ? ` (Error: ${item.error})` : ""
+        }`
+    )
+    .join("\n");
+
+  const body = `
+    ✅ The Plaid processing for ownerId: ${ownerId} has been successfully completed.
+
+    Request Details:
+    - Start Time: ${startTime ? new Date(startTime).toISOString() : "Unknown"}
+    - End Time: ${endTime ? new Date(endTime).toISOString() : "Not completed"}
+    - Total Processing Time: ${
+      startTime && endTime
+        ? ((endTime - startTime) / 1000).toFixed(2)
+        : "Unknown"
+    } seconds
+
+    📋 **Processing Summary**
+    ${processedReport || "No items processed."}
+
+    🚨 **Errors Encountered**
+    ${errors.length > 0 ? errors.join("\n") : "No errors occurred."}
+  `;
+
+  await sendEmail(subject, body);
 }
 
+// Send Report & Exit on Critical Error
+async function sendReportAndExit(ownerId: string) {
+  const subject = `❌ Verascore Processing Failed for ${ownerId}`;
+  const body = `
+    ❌ The process encountered a critical error and was unable to complete.
+
+    🚨 Errors Encountered:
+    ${errors.join("\n")}
+
+    Stopping execution.
+  `;
+
+  await sendEmail(subject, body);
+  process.exit(1);
+}
+
+// Send Email
 async function sendEmail(subject: string, body: string) {
   try {
-    console.log(`Sending email: ${subject}`);
+    console.log(`📧 Sending email: ${subject}`);
 
     const emailData = {
       from: `Verascore Platform <${PLATFORM_EMAIL_SENDER}>`,
@@ -176,49 +204,13 @@ async function sendEmail(subject: string, body: string) {
     };
 
     await mg.messages().send(emailData);
-    console.log("Email sent successfully.");
+    console.log("✅ Email sent successfully.");
   } catch (error) {
-    console.error("Failed to send email:", error);
+    console.error("❌ Failed to send email:", error);
   }
 }
 
-async function sendCompletionEmail(ownerId: string) {
-  const subject = `✅ Verascore Calculation Complete for ${ownerId}`;
-  const body = `
-     ${PROCESS_NAME} processing for ownerId: ${ownerId} has been successfully completed.
-    
-    Request Details:
-    - Start Time: ${startTime ? new Date(startTime).toISOString() : "Unknown"}
-    - End Time: ${endTime ? new Date(endTime).toISOString() : "Not completed"}
-    - Total Processing Time: ${
-      startTime && endTime
-        ? ((endTime - startTime) / 1000).toFixed(2)
-        : "Unknown"
-    } seconds
-    - Processed Items: ${Array.from(processedItems).join(", ") || "None"}
-  `;
-
-  await sendEmail(subject, body);
-}
-
-async function sendErrorEmail(context: string, error: any, details: any) {
-  const subject = `❌ Error: ${context}`;
-  const body = `
-    An error occurred in the process: ${context}
-    
-    Error Message:
-    ${error.message || error.toString()}
-
-    Stack Trace:
-    ${error.stack || "No stack trace available"}
-
-    Additional Details:
-    ${JSON.stringify(details, null, 2)}
-  `;
-
-  await sendEmail(subject, body);
-}
-
+// Main Execution
 async function main() {
   try {
     const ownerId = process.argv[2];
@@ -230,30 +222,19 @@ async function main() {
     }
 
     validateOwnerId(ownerId);
-
-    console.log(`Starting ${PROCESS_NAME} for owner=${ownerId}`);
+    console.log(`🚀 Starting Plaid worker for ownerId=${ownerId}`);
 
     timeoutHandle = setTimeout(async () => {
-      console.log("⏳  ${PROCESS_NAME} timed out! Sending alert email...");
-      await sendErrorEmail(
-        `${PROCESS_NAME} Timeout`,
-        new Error("Process exceeded timeout limit"),
-        { ownerId }
-      );
-      process.exit(1);
+      errors.push("⏳ Process timed out!");
+      await sendReportAndExit(ownerId);
     }, TIMEOUT_MS);
 
-    const interval = setInterval(() => {
-      if (!isProcessingComplete) {
-        void processOwner(ownerId);
-      } else {
-        clearInterval(interval);
-      }
-    }, INTERVAL_MS);
+    await processOwner(ownerId);
   } catch (error) {
-    console.error(`Fatal error in  ${PROCESS_NAME} process:`, error);
-    await sendErrorEmail("Fatal Error", error, {});
-    process.exit(1);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    errors.push(`Fatal error: ${errorMessage}`);
+    console.error(`❌ Fatal error: ${errorMessage}`);
+    await sendReportAndExit("unknown");
   }
 }
 
