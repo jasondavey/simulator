@@ -10,6 +10,7 @@ import { Pipeline } from './pipeline';
 import { ValidateClientIdHandler } from './validateClientIdHandler';
 import { ValidateOwnerIdHandler } from './validateOwnerIdHandler';
 import { InitializeParentDbConnectionHandler } from './initializeParentDbConnectionHandler';
+import { InitializeChildDbConnectionHandler } from './initializeChildDbConnectionHandler';
 import { MailGunService } from './services/mailgunService';
 dotenv.config();
 
@@ -83,6 +84,7 @@ async function main() {
       webhookReceivedTimestamps: {},
       errors: [],
       parentDbConnection: null,
+      childDbConnection: null,
       vsClient: null
     };
 
@@ -97,6 +99,7 @@ async function main() {
       .use(new ValidateClientIdHandler())
       .use(new InitializeParentDbConnectionHandler())
       .use(new FetchVsClientHandler())
+      .use(new InitializeChildDbConnectionHandler())
       .use(new FetchAuth0UserProfileHandler())
       .use(new FetchPlaidItemsHandler())
       .use(new FetchHistoricalWebhooksHandler())
@@ -122,6 +125,7 @@ async function main() {
       webhookReceivedTimestamps: {},
       errors,
       parentDbConnection: null,
+      childDbConnection: null,
       vsClient: null
     });
   }

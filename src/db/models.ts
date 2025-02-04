@@ -45,3 +45,30 @@ export interface Auth0Profile {
   };
   created_at: string;
 }
+
+export interface VsPlaidItem {
+  id?: string;
+  item_id: string;
+  owner?: string;
+  access_token: string;
+  available_products: string[];
+  products: string[];
+  billed_products: string[];
+  webhook?: string;
+  error?: VsPlaidItemError | null;
+  transactions_sync_next_cursor?: string;
+  institution_id: string;
+  [key: string]: any;
+}
+
+export interface VsPlaidItemError extends Record<string, any> {
+  error_type: string;
+  error_code: string;
+  error_message: string;
+  display_message: string | null;
+  status_code: number;
+  request_id: string;
+  causes?: any[];
+  documentation_url?: string;
+  suggested_action?: string;
+}

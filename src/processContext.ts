@@ -16,6 +16,7 @@ export interface ProcessContext {
   }[];
   webhookReceivedTimestamps: { [key: string]: number };
   parentDbConnection: Client | null;
+  childDbConnection: Client | null;
   vsClient: VeraScoreClient | null;
   errors: string[];
 }

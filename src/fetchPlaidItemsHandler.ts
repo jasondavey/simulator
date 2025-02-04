@@ -1,19 +1,16 @@
 import { Handler } from './handler';
 import { ProcessContext } from './processContext';
+import { PlaidItemDao } from './db/vsPlaidItemDao';
 
 export class FetchPlaidItemsHandler implements Handler {
   async handle(context: ProcessContext): Promise<void> {
     console.log('🔹 FetchPlaidItemsHandler');
     const startFetchTime = Date.now();
 
-    const MOCK_VALID_AUTH0_IDS = new Set([
-      'auth0|6723a660523e8e7b009381f4',
-      'auth0|abcdef1234567890'
-    ]);
-
-    const items = MOCK_VALID_AUTH0_IDS.has(context.ownerId)
-      ? ['item-001', 'item-002']
-      : [];
+    const items = await PlaidItemDao.getPlaidItemsByOwner(
+      context.childDbConnection!,
+      context.ownerId
+    );
 
     if (items.length === 0) {
       throw new Error(`No Plaid items found for ownerId: ${context.ownerId}`);
