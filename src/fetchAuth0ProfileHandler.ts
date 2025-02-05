@@ -10,9 +10,9 @@ export class FetchAuth0UserProfileHandler implements Handler {
     const vsClient: VeraScoreClient = (context as any).vsClient;
     const startFetchTime = Date.now();
 
-    const auth0UserToken = await Auth0Service.getAuth0UserApiToken(vsClient);
+    context.auth0UserToken = await Auth0Service.getAuth0UserApiToken(vsClient);
     const userProfile = await Auth0Service.getUserByAuth0Id(
-      auth0UserToken,
+      context.auth0UserToken,
       context.ownerId,
       vsClient.app_tenant_domain
     );

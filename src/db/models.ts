@@ -27,6 +27,7 @@ export interface VeraScoreClient {
 }
 
 export interface Auth0Profile {
+  app_metadata: any;
   user_id: string;
   email: string;
   username: string;
@@ -71,4 +72,30 @@ export interface VsPlaidItemError extends Record<string, any> {
   causes?: any[];
   documentation_url?: string;
   suggested_action?: string;
+}
+
+export interface VsPlaidWebhook {
+  client_id: string;
+  is_processed?: boolean; //fauna computed field
+  resolved_at: string;
+  [key: string]: any; // Add index signature
+  sourceWebhook: {
+    environment: string;
+    error?:
+      | {
+          error_type: string;
+          error_code: string;
+          error_message: string;
+          display_message?: string;
+          status_code: number;
+          request_id: string;
+          causes?: any[];
+          documentation_url?: string;
+          suggested_action: string;
+        }
+      | undefined;
+    item_id: string;
+    webhook_type: string;
+    webhook_code: string;
+  };
 }

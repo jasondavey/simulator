@@ -1,6 +1,25 @@
 import mailgun from 'mailgun-js';
+import { ProcessContext } from '../processContext';
 
 export class MailGunService {
+  static sendReportAndExit = async (context: ProcessContext) => {
+    const subject = `❌ ${context.process_name} Failed for ${context.ownerId}`;
+    const body = `
+      ❌ The process encountered a critical error and was unable to complete.
+  
+      🚨 Errors Encountered:
+      ${context.errors.join('\n') || 'No detailed errors recorded.'}
+  
+      ❗ Stopping execution.
+    `;
+
+    await MailGunService.sendEmail(subject, body);
+    console.error(
+      `❌ Critical failure: ${context.process_name} stopping for ownerId=${context.ownerId}`
+    );
+    process.exit(1);
+  };
+
   static sendEmail = async (subject: string, body: string) => {
     try {
       const mg = mailgun({

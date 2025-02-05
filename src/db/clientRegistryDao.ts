@@ -1,5 +1,5 @@
-import { Client, fql } from "fauna";
-import { VeraScoreClient } from "./models";
+import { Client, fql } from 'fauna';
+import { VeraScoreClient } from './models';
 
 export class ClientRegistryDao {
   public static async getClientByIdActiveOnly(
@@ -21,25 +21,6 @@ export class ClientRegistryDao {
     return result.data;
   }
 
-  public static async fetchClients(
-    dbConnection: Client
-  ): Promise<VeraScoreClient[]> {
-    let vsClients: VeraScoreClient[];
-    try {
-      const queryResult: { data: { data: VeraScoreClient[] } } =
-        await dbConnection!.query<any>(
-          fql`ClientRegistry.where(c => c.status == 'active')`
-        );
-
-      vsClients = queryResult.data.data;
-      console.info("VeraScore Clients:", vsClients);
-
-      return vsClients;
-    } catch (error) {
-      console.error("Error fetching clients:", error);
-      throw error;
-    }
-  }
   public static async fetchClient(
     dbConnection: Client,
     clientId: string
@@ -51,11 +32,11 @@ export class ClientRegistryDao {
       );
 
       vsClient = queryResult.data.data[0];
-      console.info("VeraScore Client:", vsClient);
+      console.info('VeraScore Client:', vsClient);
 
       return vsClient;
     } catch (error) {
-      console.error("Error fetching clients:", error);
+      console.error('Error fetching clients:', error);
       throw error;
     }
   }

@@ -1,6 +1,6 @@
 import { Handler } from './handler';
 import { ProcessContext } from './processContext';
-import { PlaidItemDao } from './db/vsPlaidItemDao';
+import { PlaidItemDao } from './db/plaidItemDao';
 import { Auth0Service } from './services/auth0Service';
 import { wait } from './utils/wait';
 
@@ -20,16 +20,16 @@ export class FetchPlaidItemsHandler implements Handler {
         `🔍 Polling Plaid items... attempt #${context.plaidItemsPollCount}`
       );
 
-      // Fetch the latest Auth0 profile to check onboarding status
+      // 🔄 Fetch the latest Auth0 profile ONCE and update context
       const userProfile = await Auth0Service.fetchUserProfile(context);
-      const isOnboarded =
+      context.isOnboarded =
         userProfile.app_metadata?.onboarding?.is_onboarded === true;
 
       console.log(
-        `🛂 User onboarding status: ${isOnboarded ? '✅ Onboarded' : '❌ Still onboarding'}`
+        `🛂 User onboarding status: ${context.isOnboarded ? '✅ Onboarded' : '❌ Still onboarding'}`
       );
 
-      // Fetch Plaid items from the database
+      // 🔄 Fetch Plaid items from the database
       const items = await PlaidItemDao.getPlaidItemsByOwner(
         context.childDbConnection!,
         context.ownerId
@@ -37,18 +37,17 @@ export class FetchPlaidItemsHandler implements Handler {
 
       if (items.length > 0) {
         console.log(`✅ Found ${items.length} Plaid items.`);
-        (context as any).plaidItems = items.map((item) => item.item_id);
+        context.plaidItems = items;
       } else {
         console.warn(`⚠️ No Plaid items found yet.`);
       }
 
-      // If the user is onboarded, assume the Plaid items list is final
-      if (isOnboarded) {
-        console.log(`✅ User is onboarded. Assuming Plaid item list is final.`);
-        break; // Exit polling loop
+      // If onboarding is complete, assume Plaid item list is final
+      if (context.isOnboarded) {
+        console.log(`✅ User is onboarded. Assuming Plaid item list is final.`); 
+        break; // Stop polling
       }
 
-      // Wait before polling again
       await wait(this.pollIntervalMs);
     }
 

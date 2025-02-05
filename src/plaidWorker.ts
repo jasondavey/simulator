@@ -2,7 +2,6 @@ import dotenv from 'dotenv';
 import { ProcessContext } from './processContext';
 import { CompletionHandler } from './completionHandler';
 import { FetchAuth0UserProfileHandler } from './fetchAuth0ProfileHandler';
-import { FetchHistoricalWebhooksHandler } from './fetchHistoricalWebhooksHandler';
 import { FetchPlaidItemsHandler } from './fetchPlaidItemsHandler';
 import { FetchVsClientHandler } from './fetchVsClientHandler';
 import { ImportPlaidDataHandler } from './importPlaidDataHandler';
@@ -12,11 +11,11 @@ import { ValidateOwnerIdHandler } from './validateOwnerIdHandler';
 import { InitializeParentDbConnectionHandler } from './initializeParentDbConnectionHandler';
 import { InitializeChildDbConnectionHandler } from './initializeChildDbConnectionHandler';
 import { MailGunService } from './services/mailgunService';
+import { WaitForAllWebhooksHandler } from './waitForAllWebhooksHandler';
+
 dotenv.config();
 
 const TIMEOUT_MS = parseInt(process.env.TIMEOUT_MS || '600000', 10);
-const INTERVAL_MS = parseInt(process.env.INTERVAL_MS || '10000', 10);
-const PROCESS_NAME = process.env.PROCESS_NAME;
 const FAUNA_DATABASE_VS_PARENT_ROOT_KEY =
   process.env.FAUNA_DATABASE_VS_PARENT_ROOT_KEY!;
 if (!FAUNA_DATABASE_VS_PARENT_ROOT_KEY) {
@@ -26,34 +25,6 @@ if (!FAUNA_DATABASE_VS_PARENT_ROOT_KEY) {
 let timeoutHandle: NodeJS.Timeout | null = null;
 let errors: string[] = [];
 
-async function sendReportAndExit(context: ProcessContext) {
-  const subject = `❌ ${PROCESS_NAME} Failed for ${context.ownerId}`;
-  const body = `
-    ❌ The process encountered a critical error and was unable to complete.
-
-    🚨 Errors Encountered:
-    ${context.errors.join('\n') || 'No detailed errors recorded.'}
-
-    ❗ Stopping execution.
-  `;
-
-  await sendEmail(subject, body);
-  console.error(
-    `❌ Critical failure: ${PROCESS_NAME} stopping for ownerId=${context.ownerId}`
-  );
-  process.exit(1);
-}
-
-async function sendEmail(subject: string, body: string) {
-  try {
-    console.log(`📧 Sending email: ${subject}`);
-
-    await MailGunService.sendEmail(subject, body);
-    console.log('✅ Email sent successfully.');
-  } catch (error) {
-    console.error('❌ Failed to send email:', error);
-  }
-}
 async function main() {
   try {
     const ownerId = process.argv[2];
@@ -85,13 +56,20 @@ async function main() {
       errors: [],
       parentDbConnection: null,
       childDbConnection: null,
-      vsClient: null
+      vsClient: null,
+      onboardingPollCount: 0,
+      webhookPollCount: 0,
+      plaidItemsPollCount: 0,
+      process_name: process.env.PROCESS_NAME!,
+      auth0UserToken: '',
+      isOnboarded: undefined,
+      plaidItems: []
     };
 
     // Timeout handler
     timeoutHandle = setTimeout(async () => {
       context.errors.push('⏳ Process timed out!');
-      await sendReportAndExit(context);
+      await MailGunService.sendReportAndExit(context);
     }, TIMEOUT_MS);
 
     const pipeline = new Pipeline()
@@ -102,7 +80,8 @@ async function main() {
       .use(new InitializeChildDbConnectionHandler())
       .use(new FetchAuth0UserProfileHandler())
       .use(new FetchPlaidItemsHandler())
-      .use(new FetchHistoricalWebhooksHandler())
+      // .use(new FetchHistoricalWebhooksHandler())
+      .use(new WaitForAllWebhooksHandler())
       .use(new ImportPlaidDataHandler())
       .use(new CompletionHandler());
 
@@ -114,7 +93,7 @@ async function main() {
     const errorMessage = error instanceof Error ? error.message : String(error);
     errors.push(`Fatal error in main: ${errorMessage}`);
     console.error(`❌ Fatal error in main: ${errorMessage}`);
-    await sendReportAndExit({
+    await MailGunService.sendReportAndExit({
       ownerId: 'unknown',
       clientId: 'unknown',
       startTime: null,
@@ -126,7 +105,14 @@ async function main() {
       errors,
       parentDbConnection: null,
       childDbConnection: null,
-      vsClient: null
+      vsClient: null,
+      onboardingPollCount: 0,
+      webhookPollCount: 0,
+      plaidItemsPollCount: 0,
+      process_name: process.env.PROCESS_NAME!,
+      auth0UserToken: '',
+      isOnboarded: false,
+      plaidItems: []
     });
   }
 }

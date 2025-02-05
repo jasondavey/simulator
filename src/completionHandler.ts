@@ -38,6 +38,11 @@ async function sendCompletionEmail(context: ProcessContext) {
   
       📋 **Processing Summary**
       ${processedReport || 'No items processed.'}
+
+      Polling Stats:
+    - Plaid Items: ${context.plaidItemsPollCount || 0}
+    - Onboarding Polls: ${context.onboardingPollCount || 0}
+    - Webhook Polls: ${context.webhookPollCount || 0}
   
       🚨 **Errors Encountered**
       ${context.errors.length > 0 ? context.errors.join('\n') : 'No errors occurred.'}

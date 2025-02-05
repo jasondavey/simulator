@@ -1,4 +1,4 @@
-import { ClientRegistryDao } from './db/vsClientRegistryDao';
+import { ClientRegistryDao } from './db/clientRegistryDao';
 import { Handler } from './handler';
 import { ProcessContext } from './processContext';
 
