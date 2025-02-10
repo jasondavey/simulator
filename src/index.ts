@@ -3,7 +3,9 @@ import { ProcessContext } from './processContext';
 import { createActor } from 'xstate';
 import { plaidAccountSyncWorfklow } from './plaidSyncWorkflow';
 
-export async function getGreeting(name: string): Promise<{ greeting: string }> {
+export async function getGreeting(
+  ownerId: string
+): Promise<{ greeting: string }> {
   return new Promise((res, rej) => {
     setTimeout(() => {
       if (Math.random() < 0.5) {
@@ -11,7 +13,7 @@ export async function getGreeting(name: string): Promise<{ greeting: string }> {
         return;
       }
       res({
-        greeting: `Hello, ${name}!`
+        greeting: `Hello, ${ownerId}!`
       });
     }, 1000);
   });
