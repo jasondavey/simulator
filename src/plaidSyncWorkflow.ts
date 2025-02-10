@@ -10,7 +10,6 @@ export const plaidAccountSyncWorfklow = setup({
     context: {} as {
       ownerId: string;
       clientId: string;
-      name: string;
       data: {
         greeting: string;
       } | null;
@@ -18,9 +17,8 @@ export const plaidAccountSyncWorfklow = setup({
     }
   },
   actors: {
-    fetchUser: fromPromise(
-      ({ input }: { input: { name: string; ownerId: string } }) =>
-        getGreeting(input.ownerId)
+    fetchUser: fromPromise(({ input }: { input: { ownerId: string } }) =>
+      getGreeting(input.ownerId)
     )
   }
 }).createMachine({
@@ -29,7 +27,6 @@ export const plaidAccountSyncWorfklow = setup({
   context: {
     ownerId,
     clientId,
-    name: 'World',
     data: null,
     parentDbConnection: null
   },
@@ -43,7 +40,6 @@ export const plaidAccountSyncWorfklow = setup({
       invoke: {
         src: 'fetchUser',
         input: ({ context }) => ({
-          name: context.name,
           ownerId: context.ownerId
         }),
         onDone: {
