@@ -26,4 +26,4 @@ fetchActor.subscribe((state) => {
 });
 fetchActor.start();
 
-fetchActor.send({ type: 'FETCH' });
+fetchActor.send({ type: 'VALIDATE' });

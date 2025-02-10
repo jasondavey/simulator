@@ -33,14 +33,15 @@ export const plaidAccountSyncWorfklow = setup({
   states: {
     idle: {
       on: {
-        FETCH: 'loading'
+        VALIDATE: 'validating'
       }
     },
-    loading: {
+    validating: {
       invoke: {
         src: 'fetchUser',
         input: ({ context }) => ({
-          ownerId: context.ownerId
+          ownerId: context.ownerId,
+          clientId: context.clientId
         }),
         onDone: {
           target: 'success',
@@ -54,10 +55,10 @@ export const plaidAccountSyncWorfklow = setup({
     success: {},
     failure: {
       after: {
-        1000: 'loading'
+        1000: 'validating'
       },
       on: {
-        RETRY: 'loading'
+        RETRY: 'validating'
       }
     }
   }
