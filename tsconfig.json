@@ -7,5 +7,5 @@
     "outDir": "dist",
     "skipLibCheck": false
   },
-  "include": ["src/**/*"]
+  "include": ["src/**/*", "src/onboardingMachine.ts"]
 }
