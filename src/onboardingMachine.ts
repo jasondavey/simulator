@@ -1,12 +1,16 @@
+import { Client } from 'fauna';
 import { setup, assign } from 'xstate';
+import { MailGunService } from './services/mailgunService';
 
 interface OnboardingInput {
   clientId: string;
   memberId: string;
+  parentDbConnection: Client;
 }
-interface OnboardingContext {
-  onboarded: boolean;
 
+interface OnboardingContext {
+  parentDbConnection: Client | null;
+  onboarded: boolean;
   clientId: string;
   memberId: string;
 
@@ -26,9 +30,6 @@ interface OnboardingContext {
   scoringFailures: string[];
 }
 
-/**
- * Event union
- */
 type OnboardingEvent =
   // Bank Connection
   | { type: 'BANK_CONNECTED'; itemId: string }
@@ -47,24 +48,27 @@ type OnboardingEvent =
   | { type: 'SCORING_COMPLETE' }
   | { type: 'SCORING_FAILED' };
 
-/**
- * Onboarding machine with a parent "onboarding" parallel state
- * and a top-level "finalSummary" state.
- */
 export const onboardingMachine = setup({
-  // 1) XState v5 type definitions
   types: {
     context: {} as OnboardingContext,
     input: {} as OnboardingInput,
     events: {} as OnboardingEvent
   },
 
-  // 2) Actions & guards
   actions: {
     // A) Bank Connection
-    markOnboarded: assign(({ context }) => ({
-      onboarded: true
-    })),
+    markOnboarded: async ({ context }) => {
+      context.onboarded = true;
+
+      try {
+        await MailGunService.sendEmail(
+          'Onboarding Complete',
+          'Congratulations! You are now onboarded.'
+        );
+      } catch (error) {
+        console.error('Error sending onboarding email:', error);
+      }
+    },
 
     logTimeout: () => {
       console.warn('Bank-connection timed out overall.');
@@ -97,13 +101,9 @@ export const onboardingMachine = setup({
 
     // B) Webhook Search
     pollForWebhooks: assign(({ context }) => {
-      // This is a simplified example; you might do real external checks
       const updatedQueue = { ...context.searchQueue };
       for (const itemId of Object.keys(updatedQueue)) {
         updatedQueue[itemId] += 10;
-        // If itemId hits 60s or 120s => time out, etc.
-        // For demonstration, we just increment. In a real flow,
-        // you'd send a WEBHOOK_SEARCH_FAILED event if you want to handle timeouts.
       }
       return { searchQueue: updatedQueue };
     }),
@@ -124,7 +124,6 @@ export const onboardingMachine = setup({
       const newSet = new Set(context.pendingImports);
       newSet.add(event.payload.itemId);
 
-      // Remove the item from searchQueue, since we found the webhook
       const updatedQueue = { ...context.searchQueue };
       delete updatedQueue[event.payload.itemId];
 
@@ -164,10 +163,8 @@ export const onboardingMachine = setup({
     // E) Final summary
     logSummary: ({ context }) => {
       console.log('=== Final Summary ===');
-      // Check the new fields:
       console.log('Client ID:', context.clientId);
       console.log('Member ID:', context.memberId);
-
       console.log('Onboarded:', context.onboarded);
       console.log(
         'Bank Connection Successes:',
@@ -184,16 +181,12 @@ export const onboardingMachine = setup({
     noPendingImports: ({ context }) => context.pendingImports.size === 0
   }
 }).createMachine({
-  //////////////////////////////////////////////////////////////
-  // 3) Default context — now includes clientId, memberId
-  //////////////////////////////////////////////////////////////
   id: 'onboardingMachine',
   initial: 'onboarding',
-
   context: ({ input }) => ({
+    parentDbConnection: input.parentDbConnection,
     clientId: input.clientId,
     memberId: input.memberId,
-
     onboarded: false,
 
     bankConnectionSuccesses: [],
@@ -208,36 +201,44 @@ export const onboardingMachine = setup({
     scoringFailures: []
   }),
 
-  //////////////////////////////////////////////////////////////
-  // 4) The parent "onboarding" state (type: 'parallel')
-  //    and a sibling "finalSummary" state.
-  //////////////////////////////////////////////////////////////
   states: {
+    //////////////////////////////////////////
+    // 1) The parent "onboarding" state
+    //////////////////////////////////////////
     onboarding: {
-      // All sub-states (bankConnection, webhookSearch, dataImport, scoring) run in parallel.
       type: 'parallel',
-
-      // When all parallel branches finalize => finalSummary
       onDone: 'finalSummary',
 
-      //////////////////////////////////////////////////////////////////
-      // 4A) Parallel States
-      //////////////////////////////////////////////////////////////////
       states: {
-        /////////////////////////////////////
+        ////////////////////////////////
         // (A) Bank Connection
-        /////////////////////////////////////
+        ////////////////////////////////
         bankConnection: {
           initial: 'connecting',
           states: {
             connecting: {
-              // e.g. after 120s => timedOut
               after: {
-                120000: { target: 'timedOut', actions: 'logTimeout' }
+                10000: {
+                  target: 'timedOut',
+                  actions: 'logTimeout'
+                }
               },
               on: {
-                BANK_CONNECTED: { actions: 'addBankSuccess' },
-                BANK_CONNECTION_FAILED: { actions: 'addBankFailure' },
+                // Remain in "connecting" so user can connect multiple banks
+                BANK_CONNECTED: {
+                  actions: 'addBankSuccess'
+                  // If you want to finalize after one success:
+                  // target: 'doneConnecting'
+                },
+                BANK_CONNECTION_FAILED: {
+                  actions: 'addBankFailure'
+                  // Possibly target a different final or stay in "connecting"
+                  // target: 'timedOut'
+                },
+                TIME_EXCEEDED: {
+                  target: 'timedOut',
+                  actions: 'logTimeout'
+                },
                 USER_CLICK_FINISH: {
                   target: 'doneConnecting',
                   actions: 'markOnboarded'
@@ -249,24 +250,23 @@ export const onboardingMachine = setup({
           }
         },
 
-        /////////////////////////////////////
+        ////////////////////////////////
         // (B) Webhook Search
-        /////////////////////////////////////
+        ////////////////////////////////
         webhookSearch: {
           initial: 'searching',
           states: {
             searching: {
               after: {
-                10000: {
+                2000: {
                   internal: true,
-                  actions: [
-                    'pollForWebhooks'
-                    // Possibly check which items should fail => WEBHOOK_SEARCH_FAILED
-                  ]
+                  actions: ['pollForWebhooks']
                 }
               },
               on: {
-                WEBHOOK_SEARCH_FAILED: { actions: 'markWebhookSearchFailed' },
+                WEBHOOK_SEARCH_FAILED: {
+                  actions: 'markWebhookSearchFailed'
+                },
                 HISTORICAL_UPDATE: {
                   actions: 'addPendingImport'
                 }
@@ -275,9 +275,9 @@ export const onboardingMachine = setup({
           }
         },
 
-        /////////////////////////////////////
+        ////////////////////////////////
         // (C) Data Import
-        /////////////////////////////////////
+        ////////////////////////////////
         dataImport: {
           initial: 'idle',
           states: {
@@ -304,16 +304,18 @@ export const onboardingMachine = setup({
                     actions: 'removePendingImport'
                   }
                 ],
-                DATA_IMPORT_FAILED: { actions: 'markImportFailed' }
+                DATA_IMPORT_FAILED: {
+                  actions: 'markImportFailed'
+                }
               }
             },
             importComplete: { type: 'final' }
           }
         },
 
-        /////////////////////////////////////
+        ////////////////////////////////
         // (D) Scoring
-        /////////////////////////////////////
+        ////////////////////////////////
         scoring: {
           initial: 'idle',
           states: {
@@ -327,11 +329,10 @@ export const onboardingMachine = setup({
             doneScoring: { type: 'final' }
           }
         }
-      }, // end of parallel states
+      },
 
-      //////////////////////////////////////////////////////////////////
-      // 4B) Auto-start scoring once dataImport => importComplete
-      //////////////////////////////////////////////////////////////////
+      // Automatically start scoring once dataImport => importComplete
+      // and scoring => 'idle'
       on: {
         'xstate.parallel.state.value': [
           {
@@ -352,15 +353,14 @@ export const onboardingMachine = setup({
           }
         ],
         'BEGIN_SCORING': {
-          // We target "onboarding.scoring.scoring"
           target: '.scoring.scoring'
         }
       }
     },
 
-    //////////////////////////////////////////////////////////////////
-    // 5) Final summary once "onboarding" onDone
-    //////////////////////////////////////////////////////////////////
+    //////////////////////////////////////////
+    // 2) Final summary after "onboarding"
+    //////////////////////////////////////////
     finalSummary: {
       type: 'final',
       entry: 'logSummary'
