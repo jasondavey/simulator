@@ -1,11 +1,11 @@
 import { createActor } from 'xstate';
-import { onboardingMachine } from './onboardingMachine'; // Adjust import path if needed
+import { onboardingMachine } from './onboardingMachine'; // Adjust path if needed
 
 function simulateOnboarding() {
   // 1) Create and start the actor
   const actor = createActor(onboardingMachine).start();
 
-  // Helper to log the current state + context
+  // Helper to log current state + context
   function logState(step: string) {
     const snapshot = actor.getSnapshot();
     console.log(`\n[${step}]`);
@@ -16,48 +16,113 @@ function simulateOnboarding() {
   // Initial state
   logState('Initial');
 
-  // 2) After 2s, one bank connects successfully
+  // ─────────────────────────────────────────────────────────────
+  // 2) Connect Bank #1 successfully after 2s
   setTimeout(() => {
     actor.send({ type: 'BANK_CONNECTED', itemId: 'bank1' });
-    logState('After bank1 connected');
+    logState('Bank #1 connected');
   }, 2000);
 
-  // 3) After 3s, another bank fails to connect
+  // 3) Connect Bank #2 successfully after 3s
   setTimeout(() => {
-    actor.send({ type: 'BANK_CONNECTION_FAILED', itemId: 'bank2' });
-    logState('After bank2 connection failed');
+    actor.send({ type: 'BANK_CONNECTED', itemId: 'bank2' });
+    logState('Bank #2 connected');
   }, 3000);
 
-  // 4) After 5s, user finishes connecting banks => bankConnection done
+  // 4) Bank #3 fails to connect after 4s
   setTimeout(() => {
-    actor.send({ type: 'USER_CLICK_FINISH' });
-    logState('User clicked finish => bankConnection done');
+    actor.send({ type: 'BANK_CONNECTION_FAILED', itemId: 'bank3' });
+    logState('Bank #3 failed to connect');
+  }, 4000);
+
+  // 5) Connect Bank #4 successfully after 5s
+  setTimeout(() => {
+    actor.send({ type: 'BANK_CONNECTED', itemId: 'bank4' });
+    logState('Bank #4 connected');
   }, 5000);
 
-  // 5) After 7s, a Plaid webhook arrives for bank1 => triggers data import
+  // 6) Connect Bank #5 successfully after 6s
   setTimeout(() => {
-    actor.send({ type: 'HISTORICAL_UPDATE', payload: { itemId: 'bank1' } });
-    logState('After HISTORICAL_UPDATE for bank1 => dataImport.active');
+    actor.send({ type: 'BANK_CONNECTED', itemId: 'bank5' });
+    logState('Bank #5 connected');
+  }, 6000);
+
+  // 7) User finishes connecting banks after 7s
+  setTimeout(() => {
+    actor.send({ type: 'USER_CLICK_FINISH' });
+    logState('User clicked finish => no more bank connections');
   }, 7000);
 
-  // 6) After 9s, data import fails for bank1
+  // ─────────────────────────────────────────────────────────────
+  // 8) Webhook discovered for Bank #1 after 8s => triggers data import
+  setTimeout(() => {
+    actor.send({ type: 'HISTORICAL_UPDATE', payload: { itemId: 'bank1' } });
+    logState('Webhook for Bank #1 => pendingImports');
+  }, 8000);
+
+  // 9) Data import completes for Bank #1 after 9s
+  setTimeout(() => {
+    actor.send({
+      type: 'DATA_IMPORT_COMPLETE',
+      payload: { itemId: 'bank1' }
+    });
+    logState('Bank #1 data import complete');
+  }, 9000);
+
+  // 10) Webhook discovered for Bank #2 after 10s
+  setTimeout(() => {
+    actor.send({ type: 'HISTORICAL_UPDATE', payload: { itemId: 'bank2' } });
+    logState('Webhook for Bank #2 => pendingImports');
+  }, 10000);
+
+  // 11) Data import **fails** for Bank #2 after 11s
   setTimeout(() => {
     actor.send({
       type: 'DATA_IMPORT_FAILED',
-      payload: { itemId: 'bank1' }
+      payload: { itemId: 'bank2' }
     });
-    logState('After bank1 import fails');
-    // With no other pending imports, dataImport => importComplete => triggers scoring
-  }, 9000);
+    logState('Bank #2 data import failed');
+  }, 11000);
 
-  // 7) After 12s, scoring completes => onDone => finalSummary
+  // 12) Webhook discovered for Bank #4 after 12s
+  setTimeout(() => {
+    actor.send({ type: 'HISTORICAL_UPDATE', payload: { itemId: 'bank4' } });
+    logState('Webhook for Bank #4 => pendingImports');
+  }, 12000);
+
+  // 13) Data import complete for Bank #4 after 13s
+  setTimeout(() => {
+    actor.send({
+      type: 'DATA_IMPORT_COMPLETE',
+      payload: { itemId: 'bank4' }
+    });
+    logState('Bank #4 data import complete');
+  }, 13000);
+
+  // 14) Webhook discovered for Bank #5 after 14s
+  setTimeout(() => {
+    actor.send({ type: 'HISTORICAL_UPDATE', payload: { itemId: 'bank5' } });
+    logState('Webhook for Bank #5 => pendingImports');
+  }, 14000);
+
+  // 15) Data import completes for Bank #5 after 16s
+  setTimeout(() => {
+    actor.send({
+      type: 'DATA_IMPORT_COMPLETE',
+      payload: { itemId: 'bank5' }
+    });
+    logState('Bank #5 data import complete');
+    // At this point, if there are no other pending imports,
+    // dataImport => importComplete => triggers scoring
+  }, 16000);
+
+  // 16) Scoring completes after 18s => final summary
   setTimeout(() => {
     actor.send({ type: 'SCORING_COMPLETE' });
-    logState('After SCORING_COMPLETE');
-    // The machine transitions to finalSummary automatically once all parallel states finalize.
-    // "logSummary" will print the summary to the console.
-  }, 12000);
+    logState('Scoring complete => machine final summary');
+    // The machine transitions to finalSummary, logs results via logSummary.
+  }, 18000);
 }
 
-// Run the simulation
+// Execute the simulation
 simulateOnboarding();
