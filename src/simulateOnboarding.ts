@@ -10,7 +10,12 @@ import { onboardingMachine } from './onboardingMachine'; // Adjust path if neede
  */
 function simulateFiveBanksParallel() {
   // 1) Create & start the actor
-  const actor = createActor(onboardingMachine).start();
+  const actor = createActor(onboardingMachine, {
+    input: {
+      clientId: process.argv[3],
+      memberId: process.argv[2]
+    }
+  }).start();
 
   // Helper to log state + context
   function logState(label: string) {
@@ -36,16 +41,14 @@ function simulateFiveBanksParallel() {
   // 9s: USER_CLICK_FINISH => user is onboarded, no more connections
   // 10s: bank2 => HISTORICAL_UPDATE => data import
   // 11s: bank2 => DATA_IMPORT_COMPLETE => triggers scoring
-  // 12s: SCORING_COMPLETE => banks 2 done scoring
+  // 12s: SCORING_COMPLETE => bank2 done
   // 12.5s: bank3 => HISTORICAL_UPDATE => data import
   // 13s: bank3 => DATA_IMPORT_COMPLETE => triggers scoring => done
   // 13.5s: bank4 => HISTORICAL_UPDATE => data import
   // 14s: bank4 => DATA_IMPORT_COMPLETE => triggers scoring => done
   // 14.5s: bank5 => HISTORICAL_UPDATE => data import
-  // 15s: bank5 => DATA_IMPORT_COMPLETE => triggers scoring => final summary
-  //
-  // If you want fewer steps, remove some connections or merges. The key:
-  // bank1 fully finishes before user is onboarded at 9s, while others come after.
+  // 15s: bank5 => DATA_IMPORT_COMPLETE => triggers scoring => final
+  // 16s: final scoring complete => finalSummary
 
   // 2s: bank1 connects
   setTimeout(() => {

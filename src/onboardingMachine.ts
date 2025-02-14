@@ -1,10 +1,14 @@
 import { setup, assign } from 'xstate';
 
-/**
- * Context interface
- */
+interface OnboardingInput {
+  clientId: string;
+  memberId: string;
+}
 interface OnboardingContext {
   onboarded: boolean;
+
+  clientId: string;
+  memberId: string;
 
   // Bank-level successes/failures
   bankConnectionSuccesses: string[];
@@ -51,6 +55,7 @@ export const onboardingMachine = setup({
   // 1) XState v5 type definitions
   types: {
     context: {} as OnboardingContext,
+    input: {} as OnboardingInput,
     events: {} as OnboardingEvent
   },
 
@@ -159,6 +164,10 @@ export const onboardingMachine = setup({
     // E) Final summary
     logSummary: ({ context }) => {
       console.log('=== Final Summary ===');
+      // Check the new fields:
+      console.log('Client ID:', context.clientId);
+      console.log('Member ID:', context.memberId);
+
       console.log('Onboarded:', context.onboarded);
       console.log(
         'Bank Connection Successes:',
@@ -176,12 +185,15 @@ export const onboardingMachine = setup({
   }
 }).createMachine({
   //////////////////////////////////////////////////////////////
-  // 3) Default context
+  // 3) Default context — now includes clientId, memberId
   //////////////////////////////////////////////////////////////
   id: 'onboardingMachine',
   initial: 'onboarding',
 
-  context: {
+  context: ({ input }) => ({
+    clientId: input.clientId,
+    memberId: input.memberId,
+
     onboarded: false,
 
     bankConnectionSuccesses: [],
@@ -194,7 +206,7 @@ export const onboardingMachine = setup({
     dataImportFailures: [],
 
     scoringFailures: []
-  },
+  }),
 
   //////////////////////////////////////////////////////////////
   // 4) The parent "onboarding" state (type: 'parallel')
