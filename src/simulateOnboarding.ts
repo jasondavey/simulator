@@ -1,45 +1,51 @@
 import { createActor } from 'xstate';
-import { onboardingMachine } from './onboardingMachine'; // Adjust import path if needed
+import { onboardingMachine } from './onboardingMachine'; // Adjust path if needed
 
 /**
- * Demonstrates parallel concurrency with multiple banks connecting,
- * receiving webhooks, importing data, and final scoring - all overlapping.
+ * This simulation has five banks:
+ *  - Bank1 fully completes all states (connection -> import -> scoring)
+ *    before the user finishes onboarding (USER_CLICK_FINISH).
+ *  - Banks 2, 3, 4, 5 connect later, but user doesn't click Finish until
+ *    after they've connected. They can do data import / scoring after finishing.
  */
-function simulateParallelOnboarding() {
-  // Create and start the actor
+function simulateFiveBanksParallel() {
+  // 1) Create & start the actor
   const actor = createActor(onboardingMachine).start();
 
-  // Helper: log current state + context
+  // Helper to log state + context
   function logState(label: string) {
     const snapshot = actor.getSnapshot();
     console.log(`\n[${label}]`);
-    console.log('State value:', snapshot.value);
+    console.log('State:', snapshot.value);
     console.log('Context:', snapshot.context);
   }
 
-  // Initial
   logState('Initial');
 
-  // ─────────────────────────────────────────────────────
-  // TIMELINE OF EVENTS (in ms) to show concurrency:
+  // ─────────────────────────────────────────────────────────────
+  // Timeline of events:
   //
-  //  2s: bank1 connects
-  //  3s: bank2 connects
-  //  4s: HISTORICAL_UPDATE for bank1 => triggers data import
-  //  5s: bank3 connects
-  //  6s: data import fails for bank1
-  //  6.5s: bank4 connects
-  //  7s: user finishes connecting => no more connections
-  //  8s: HISTORICAL_UPDATE for bank2 => data import
-  //  9s: data import completes for bank2
-  //  9.5s: HISTORICAL_UPDATE for bank3 => data import
-  //  10s: data import completes for bank3
-  //  10.5s: HISTORICAL_UPDATE for bank4 => data import
-  //  11s: data import completes for bank4 => triggers scoring
-  //  12s: SCORING_COMPLETE => final summary
+  // 2s: bank1 connects
+  // 3s: bank2 connects
+  // 4s: bank1 => HISTORICAL_UPDATE => triggers data import
+  // 5s: bank1 => DATA_IMPORT_COMPLETE => triggers scoring
+  // 6s: SCORING_COMPLETE => bank1 fully done
+  // 7s: bank3 connects
+  // 8s: bank4 connects
+  // 8.5s: bank5 connects
+  // 9s: USER_CLICK_FINISH => user is onboarded, no more connections
+  // 10s: bank2 => HISTORICAL_UPDATE => data import
+  // 11s: bank2 => DATA_IMPORT_COMPLETE => triggers scoring
+  // 12s: SCORING_COMPLETE => banks 2 done scoring
+  // 12.5s: bank3 => HISTORICAL_UPDATE => data import
+  // 13s: bank3 => DATA_IMPORT_COMPLETE => triggers scoring => done
+  // 13.5s: bank4 => HISTORICAL_UPDATE => data import
+  // 14s: bank4 => DATA_IMPORT_COMPLETE => triggers scoring => done
+  // 14.5s: bank5 => HISTORICAL_UPDATE => data import
+  // 15s: bank5 => DATA_IMPORT_COMPLETE => triggers scoring => final summary
   //
-  // This schedule ensures that while one bank is still connecting,
-  // another has already started data import, etc.
+  // If you want fewer steps, remove some connections or merges. The key:
+  // bank1 fully finishes before user is onboarded at 9s, while others come after.
 
   // 2s: bank1 connects
   setTimeout(() => {
@@ -53,91 +59,135 @@ function simulateParallelOnboarding() {
     logState('bank2 connected');
   }, 3000);
 
-  // 4s: HISTORICAL_UPDATE for bank1 => triggers data import
+  // 4s: bank1 => HISTORICAL_UPDATE => triggers data import
   setTimeout(() => {
     actor.send({ type: 'HISTORICAL_UPDATE', payload: { itemId: 'bank1' } });
-    logState('Webhook for bank1 => data import started');
+    logState('bank1 webhook => data import');
   }, 4000);
 
-  // 5s: bank3 connects
+  // 5s: bank1 => data import complete => triggers scoring
+  setTimeout(() => {
+    actor.send({
+      type: 'DATA_IMPORT_COMPLETE',
+      payload: { itemId: 'bank1' }
+    });
+    logState('bank1 import complete => scoring');
+  }, 5000);
+
+  // 6s: scoring completes for bank1 => bank1 fully done
+  setTimeout(() => {
+    actor.send({ type: 'SCORING_COMPLETE' });
+    logState('bank1 scoring complete => bank1 done');
+  }, 6000);
+
+  // 7s: bank3 connects
   setTimeout(() => {
     actor.send({ type: 'BANK_CONNECTED', itemId: 'bank3' });
     logState('bank3 connected');
-  }, 5000);
+  }, 7000);
 
-  // 6s: data import fails for bank1
-  setTimeout(() => {
-    actor.send({
-      type: 'DATA_IMPORT_FAILED',
-      payload: { itemId: 'bank1' }
-    });
-    logState('bank1 import FAILS');
-  }, 6000);
-
-  // 6.5s: bank4 connects
+  // 8s: bank4 connects
   setTimeout(() => {
     actor.send({ type: 'BANK_CONNECTED', itemId: 'bank4' });
     logState('bank4 connected');
-  }, 6500);
+  }, 8000);
 
-  // 7s: user finishes connecting => no more new banks
+  // 8.5s: bank5 connects
+  setTimeout(() => {
+    actor.send({ type: 'BANK_CONNECTED', itemId: 'bank5' });
+    logState('bank5 connected');
+  }, 8500);
+
+  // 9s: user finishes => onboarded = true, no more connections
   setTimeout(() => {
     actor.send({ type: 'USER_CLICK_FINISH' });
     logState('User clicked finish => bankConnection done');
-  }, 7000);
+  }, 9000);
 
-  // 8s: HISTORICAL_UPDATE for bank2 => triggers data import
+  // 10s: bank2 => HISTORICAL_UPDATE => triggers data import
   setTimeout(() => {
-    actor.send({ type: 'HISTORICAL_UPDATE', payload: { itemId: 'bank2' } });
-    logState('Webhook for bank2 => data import started');
-  }, 8000);
+    actor.send({
+      type: 'HISTORICAL_UPDATE',
+      payload: { itemId: 'bank2' }
+    });
+    logState('bank2 webhook => data import');
+  }, 10000);
 
-  // 9s: data import completes for bank2
+  // 11s: bank2 => data import complete => triggers scoring
   setTimeout(() => {
     actor.send({
       type: 'DATA_IMPORT_COMPLETE',
       payload: { itemId: 'bank2' }
     });
-    logState('bank2 import COMPLETE');
-  }, 9000);
+    logState('bank2 import complete => scoring');
+  }, 11000);
 
-  // 9.5s: HISTORICAL_UPDATE for bank3 => triggers data import
+  // 12s: scoring completes (bank2 done)
   setTimeout(() => {
-    actor.send({ type: 'HISTORICAL_UPDATE', payload: { itemId: 'bank3' } });
-    logState('Webhook for bank3 => data import started');
-  }, 9500);
+    actor.send({ type: 'SCORING_COMPLETE' });
+    logState('bank2 scoring complete');
+  }, 12000);
 
-  // 10s: data import completes for bank3
+  // 12.5s: bank3 => HISTORICAL_UPDATE => triggers data import
+  setTimeout(() => {
+    actor.send({
+      type: 'HISTORICAL_UPDATE',
+      payload: { itemId: 'bank3' }
+    });
+    logState('bank3 webhook => data import');
+  }, 12500);
+
+  // 13s: bank3 => data import complete => triggers scoring
   setTimeout(() => {
     actor.send({
       type: 'DATA_IMPORT_COMPLETE',
       payload: { itemId: 'bank3' }
     });
-    logState('bank3 import COMPLETE');
-  }, 10000);
+    logState('bank3 import complete => scoring');
+  }, 13000);
 
-  // 10.5s: HISTORICAL_UPDATE for bank4 => triggers data import
+  // 13.5s: bank4 => HISTORICAL_UPDATE => data import
   setTimeout(() => {
-    actor.send({ type: 'HISTORICAL_UPDATE', payload: { itemId: 'bank4' } });
-    logState('Webhook for bank4 => data import started');
-  }, 10500);
+    actor.send({
+      type: 'HISTORICAL_UPDATE',
+      payload: { itemId: 'bank4' }
+    });
+    logState('bank4 webhook => data import');
+  }, 13500);
 
-  // 11s: data import completes for bank4 => triggers scoring automatically
+  // 14s: bank4 => data import complete => triggers scoring
   setTimeout(() => {
     actor.send({
       type: 'DATA_IMPORT_COMPLETE',
       payload: { itemId: 'bank4' }
     });
-    logState('bank4 import COMPLETE => dataImport final => begin scoring');
-  }, 11000);
+    logState('bank4 import complete => scoring');
+  }, 14000);
 
-  // 12s: scoring completes => final summary
+  // 14.5s: bank5 => HISTORICAL_UPDATE => data import
+  setTimeout(() => {
+    actor.send({
+      type: 'HISTORICAL_UPDATE',
+      payload: { itemId: 'bank5' }
+    });
+    logState('bank5 webhook => data import');
+  }, 14500);
+
+  // 15s: bank5 => data import complete => triggers scoring => done
+  setTimeout(() => {
+    actor.send({
+      type: 'DATA_IMPORT_COMPLETE',
+      payload: { itemId: 'bank5' }
+    });
+    logState('bank5 import complete => scoring');
+  }, 15000);
+
+  // 16s: final scoring complete => finalSummary
   setTimeout(() => {
     actor.send({ type: 'SCORING_COMPLETE' });
-    logState('SCORING_COMPLETE => finalSummary');
-    // The machine transitions to finalSummary and logs results via logSummary
-  }, 12000);
+    logState('final scoring complete => finalSummary');
+  }, 16000);
 }
 
-// Run the asynchronous parallel simulation
-simulateParallelOnboarding();
+// Run the simulation
+simulateFiveBanksParallel();
