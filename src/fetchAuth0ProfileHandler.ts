@@ -1,10 +1,10 @@
 import { VeraScoreClient } from './db/models';
 import { Handler } from './handler';
-import { ProcessContext } from './processContext';
 import { Auth0Service } from './services/auth0Service';
+import { StateMachineContext } from './stateMachineContext';
 
 export class FetchAuth0UserProfileHandler implements Handler {
-  async handle(context: ProcessContext): Promise<void> {
+  async handle(context: StateMachineContext): Promise<void> {
     console.log('🔹 FetchAuth0UserProfileHandler');
 
     const vsClient: VeraScoreClient = (context as any).vsClient;
@@ -13,12 +13,14 @@ export class FetchAuth0UserProfileHandler implements Handler {
     context.auth0UserToken = await Auth0Service.getAuth0UserApiToken(vsClient);
     const userProfile = await Auth0Service.getUserByAuth0Id(
       context.auth0UserToken,
-      context.ownerId,
+      context.memberId,
       vsClient.app_tenant_domain
     );
 
     if (!userProfile) {
-      throw new Error(`User profile not found for ownerId: ${context.ownerId}`);
+      throw new Error(
+        `User profile not found for ownerId: ${context.memberId}`
+      );
     }
 
     context.auth0FetchTime = (Date.now() - startFetchTime) / 1000;

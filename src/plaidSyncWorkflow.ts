@@ -1,9 +1,4 @@
 import { assign, fromPromise, setup } from 'xstate';
-import { getGreeting } from '.';
-import { Client } from 'fauna';
-import { ValidateClientIdHandler } from './validateClientIdHandler';
-import { ValidateOwnerIdHandler } from './validateOwnerIdHandler';
-import { ProcessContext } from './processContext';
 
 const ownerId = process.argv[2];
 const clientId = process.argv[3];

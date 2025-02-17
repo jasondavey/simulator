@@ -1,34 +1,38 @@
 import { Client } from 'fauna';
 import { setup, assign } from 'xstate';
 import { MailGunService } from './services/mailgunService';
+import { startPollingPlaidWebhooks } from './pollPlaidWebhooks';
+import { StateMachineContext } from './stateMachineContext';
 
 interface OnboardingInput {
   clientId: string;
   memberId: string;
   parentDbConnection: Client;
+  childDbConnection: Client;
 }
 
-interface OnboardingContext {
-  parentDbConnection: Client | null;
-  onboarded: boolean;
-  clientId: string;
-  memberId: string;
+// interface OnboardingContext {
+//   parentDbConnection: Client | null;
+//   childDbConnection: Client | null;
+//   onboarded: boolean;
+//   clientId: string;
+//   memberId: string;
 
-  // Bank-level successes/failures
-  bankConnectionSuccesses: string[];
-  bankConnectionFailures: string[];
+//   // Bank-level successes/failures
+//   bankConnectionSuccesses: string[];
+//   bankConnectionFailures: string[];
 
-  // Webhook search concurrency
-  searchQueue: Record<string, number>;
-  webhookSearchFailures: string[];
+//   // Webhook search concurrency
+//   searchQueue: Record<string, number>;
+//   webhookSearchFailures: string[];
 
-  // Data import concurrency
-  pendingImports: Set<string>;
-  dataImportFailures: string[];
+//   // Data import concurrency
+//   pendingImports: Set<string>;
+//   dataImportFailures: string[];
 
-  // Scoring concurrency
-  scoringFailures: string[];
-}
+//   // Scoring concurrency
+//   scoringFailures: string[];
+// }
 
 type OnboardingEvent =
   // Bank Connection
@@ -50,7 +54,7 @@ type OnboardingEvent =
 
 export const onboardingMachine = setup({
   types: {
-    context: {} as OnboardingContext,
+    context: {} as StateMachineContext,
     input: {} as OnboardingInput,
     events: {} as OnboardingEvent
   },
@@ -76,6 +80,10 @@ export const onboardingMachine = setup({
 
     addBankSuccess: assign(({ context, event }) => {
       if (event.type !== 'BANK_CONNECTED') return {};
+      console.log(`Bank connected: ${event.itemId}`);
+      // Start polling for webhooks when a bank is connected
+      startPollingPlaidWebhooks(context);
+
       return {
         bankConnectionSuccesses: [
           ...context.bankConnectionSuccesses,
@@ -184,7 +192,13 @@ export const onboardingMachine = setup({
   id: 'onboardingMachine',
   initial: 'onboarding',
   context: ({ input }) => ({
+    process_name: '',
+    startTime: Date.now(),
+    endTime: Date.now(),
+    auth0FetchTime: 0,
+    vsClient: null,
     parentDbConnection: input.parentDbConnection,
+    childDbConnection: input.childDbConnection,
     clientId: input.clientId,
     memberId: input.memberId,
     onboarded: false,
@@ -198,7 +212,21 @@ export const onboardingMachine = setup({
     pendingImports: new Set<string>(),
     dataImportFailures: [],
 
-    scoringFailures: []
+    scoringFailures: [],
+
+    plaidItemsConnectionsQueue: [],
+    plaidItemsPollCount: 0,
+    isOnboarded: false,
+    errors: [],
+
+    // Add missing properties
+    processedSummary: null,
+    webhookReceivedTimestamps: {},
+    processedItems: [],
+    auth0UserToken: '',
+    processedWebhookItems: [],
+    webhookProcessingErrors: [],
+    webhookProcessingSuccesses: []
   }),
 
   states: {
@@ -228,7 +256,7 @@ export const onboardingMachine = setup({
                 BANK_CONNECTED: {
                   actions: 'addBankSuccess'
                   // If you want to finalize after one success:
-                  // target: 'doneConnecting'
+                  //target: 'doneConnecting'
                 },
                 BANK_CONNECTION_FAILED: {
                   actions: 'addBankFailure'

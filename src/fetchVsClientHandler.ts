@@ -1,9 +1,9 @@
 import { ClientRegistryDao } from './db/clientRegistryDao';
 import { Handler } from './handler';
-import { ProcessContext } from './processContext';
+import { StateMachineContext } from './stateMachineContext';
 
 export class FetchVsClientHandler implements Handler {
-  async handle(context: ProcessContext): Promise<void> {
+  async handle(context: StateMachineContext): Promise<void> {
     console.log('🔹 FetchVsClientHandler');
     try {
       const client = await ClientRegistryDao.getClientByIdActiveOnly(

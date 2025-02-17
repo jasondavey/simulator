@@ -1,5 +1,5 @@
-import { ProcessContext } from "./processContext";
+import { StateMachineContext } from './stateMachineContext';
 
 export interface Handler {
-  handle(context: ProcessContext): Promise<void>;
+  handle(context: StateMachineContext): Promise<void>;
 }

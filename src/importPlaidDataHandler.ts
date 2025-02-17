@@ -1,8 +1,8 @@
 import { Handler } from './handler';
-import { ProcessContext } from './processContext';
+import { StateMachineContext } from './stateMachineContext';
 
 export class ImportPlaidDataHandler implements Handler {
-  async handle(context: ProcessContext): Promise<void> {
+  async handle(context: StateMachineContext): Promise<void> {
     console.log('🔹 ImportPlaidDataHandler');
 
     const webhooks: string[] = (context as any).plaidWebhooks || [];
@@ -12,7 +12,7 @@ export class ImportPlaidDataHandler implements Handler {
   }
 
   private async importOneItem(
-    context: ProcessContext,
+    context: StateMachineContext,
     itemId: string
   ): Promise<void> {
     try {

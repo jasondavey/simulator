@@ -1,6 +1,4 @@
 import dotenv from 'dotenv';
-import { ProcessContext } from './processContext';
-import { CompletionHandler } from './completionHandler';
 import { FetchAuth0UserProfileHandler } from './fetchAuth0ProfileHandler';
 import { FetchPlaidItemsHandler } from './fetchPlaidItemsHandler';
 import { FetchVsClientHandler } from './fetchVsClientHandler';
@@ -11,7 +9,7 @@ import { ValidateOwnerIdHandler } from './validateOwnerIdHandler';
 import { InitializeParentDbConnectionHandler } from './initializeParentDbConnectionHandler';
 import { InitializeChildDbConnectionHandler } from './initializeChildDbConnectionHandler';
 import { MailGunService } from './services/mailgunService';
-import { WaitForAllWebhooksHandler } from './waitForAllWebhooksHandler';
+import { StateMachineContext } from './stateMachineContext';
 
 dotenv.config();
 
@@ -44,8 +42,8 @@ async function main() {
 
     console.log(`🚀 Starting Plaid worker for ownerId=${ownerId}`);
 
-    const context: ProcessContext = {
-      ownerId,
+    const context: StateMachineContext = {
+      memberId: ownerId,
       clientId,
       startTime: Date.now(),
       endTime: null,
@@ -57,13 +55,20 @@ async function main() {
       parentDbConnection: null,
       childDbConnection: null,
       vsClient: null,
-      onboardingPollCount: 0,
-      webhookPollCount: 0,
+
       plaidItemsPollCount: 0,
       process_name: process.env.PROCESS_NAME!,
       auth0UserToken: '',
-      isOnboarded: undefined,
-      plaidItems: []
+      isOnboarded: false,
+      plaidItemsConnectionsQueue: [],
+      onboarded: false,
+      bankConnectionSuccesses: [],
+      bankConnectionFailures: [],
+      searchQueue: {},
+      webhookSearchFailures: [],
+      pendingImports: new Set<string>(),
+      dataImportFailures: [],
+      scoringFailures: []
     };
 
     // Timeout handler
@@ -81,9 +86,7 @@ async function main() {
       .use(new FetchAuth0UserProfileHandler())
       .use(new FetchPlaidItemsHandler())
       // .use(new FetchHistoricalWebhooksHandler())
-      .use(new WaitForAllWebhooksHandler())
-      .use(new ImportPlaidDataHandler())
-      .use(new CompletionHandler());
+      .use(new ImportPlaidDataHandler());
 
     // Execute pipeline
     await pipeline.execute(context);
@@ -94,7 +97,7 @@ async function main() {
     errors.push(`Fatal error in main: ${errorMessage}`);
     console.error(`❌ Fatal error in main: ${errorMessage}`);
     await MailGunService.sendReportAndExit({
-      ownerId: 'unknown',
+      memberId: 'unknown',
       clientId: 'unknown',
       startTime: null,
       endTime: null,
@@ -106,13 +109,19 @@ async function main() {
       parentDbConnection: null,
       childDbConnection: null,
       vsClient: null,
-      onboardingPollCount: 0,
-      webhookPollCount: 0,
       plaidItemsPollCount: 0,
       process_name: process.env.PROCESS_NAME!,
       auth0UserToken: '',
       isOnboarded: false,
-      plaidItems: []
+      plaidItemsConnectionsQueue: [],
+      onboarded: false,
+      bankConnectionSuccesses: [],
+      bankConnectionFailures: [],
+      searchQueue: {},
+      webhookSearchFailures: [],
+      pendingImports: new Set<string>(),
+      dataImportFailures: [],
+      scoringFailures: []
     });
   }
 }

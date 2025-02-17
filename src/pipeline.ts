@@ -1,15 +1,15 @@
 import { Handler } from './handler';
-import { ProcessContext } from './processContext';
+import { StateMachineContext } from './stateMachineContext';
 
-export class Pipeline {
+export class Pipeline<T> {
   private handlers: Handler[] = [];
 
-  use(handler: Handler): Pipeline {
+  use(handler: Handler): Pipeline<T> {
     this.handlers.push(handler);
     return this;
   }
 
-  async execute(context: ProcessContext): Promise<void> {
+  async execute(context: StateMachineContext): Promise<void> {
     for (const handler of this.handlers) {
       await handler.handle(context);
     }

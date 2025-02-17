@@ -1,14 +1,14 @@
 import { Handler } from './handler';
-import { ProcessContext } from './processContext';
 import { PlaidItemDao } from './db/plaidItemDao';
 import { Auth0Service } from './services/auth0Service';
 import { wait } from './utils/wait';
+import { StateMachineContext } from './stateMachineContext';
 
 export class FetchPlaidItemsHandler implements Handler {
   private readonly maxPollTimeMs = 10 * 60 * 1000; // 10 minutes
   private readonly pollIntervalMs = 5000; // 5 seconds
 
-  async handle(context: ProcessContext): Promise<void> {
+  async handle(context: StateMachineContext): Promise<void> {
     console.log('🔹 FetchPlaidItemsHandler');
 
     const startTime = Date.now();
@@ -32,19 +32,19 @@ export class FetchPlaidItemsHandler implements Handler {
       // 🔄 Fetch Plaid items from the database
       const items = await PlaidItemDao.getPlaidItemsByOwner(
         context.childDbConnection!,
-        context.ownerId
+        context.memberId
       );
 
       if (items.length > 0) {
         console.log(`✅ Found ${items.length} Plaid items.`);
-        context.plaidItems = items;
+        //context.plaidItems = items;
       } else {
         console.warn(`⚠️ No Plaid items found yet.`);
       }
 
       // If onboarding is complete, assume Plaid item list is final
       if (context.isOnboarded) {
-        console.log(`✅ User is onboarded. Assuming Plaid item list is final.`); 
+        console.log(`✅ User is onboarded. Assuming Plaid item list is final.`);
         break; // Stop polling
       }
 

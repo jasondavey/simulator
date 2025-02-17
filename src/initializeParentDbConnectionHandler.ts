@@ -1,11 +1,9 @@
 import { Handler } from './handler';
-import { ProcessContext } from './processContext';
-import {
-  createVsParentDbConnection,
-} from './services/faunaService';
+import { createVsParentDbConnection } from './services/faunaService';
+import { StateMachineContext } from './stateMachineContext';
 
 export class InitializeParentDbConnectionHandler implements Handler {
-  async handle(context: ProcessContext): Promise<void> {
+  async handle(context: StateMachineContext): Promise<void> {
     console.log('🔹 Initialize Parent Db Connection');
     try {
       if (!process.env.FAUNA_DATABASE_VS_PARENT_ROOT_KEY) {
@@ -14,6 +12,7 @@ export class InitializeParentDbConnectionHandler implements Handler {
       context.parentDbConnection = await createVsParentDbConnection(
         process.env.FAUNA_DATABASE_VS_PARENT_ROOT_KEY!
       );
+      console.log('🔹 SUCCESS: Initialize Parent Db Connection');
     } catch (error) {
       throw new Error(
         `Failed to initialize parent db connection. ${String(error)}`

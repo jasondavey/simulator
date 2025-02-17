@@ -1,7 +1,7 @@
 import { VeraScoreClient } from '../db/models';
 import { HttpError, HttpStatus } from '../httpHandler';
 import { Auth0Profile } from '../db/models';
-import { ProcessContext } from '../processContext';
+import { StateMachineContext } from '../stateMachineContext';
 
 export class Auth0Service {
   static getAuth0ManagementApiToken = async (
@@ -102,15 +102,15 @@ export class Auth0Service {
 
   //only use this as a helper once a user has been retrieved via a auth0 token
   static fetchUserProfile = async (
-    context: ProcessContext
+    context: StateMachineContext
   ): Promise<Auth0Profile> => {
     const userProfile = await Auth0Service.getUserByAuth0Id(
       context.auth0UserToken,
-      context.ownerId,
+      context.memberId,
       context.vsClient!.app_tenant_domain
     );
     if (!userProfile) {
-      throw new Error(`User profile not found for ownerId=${context.ownerId}`);
+      throw new Error(`User profile not found for ownerId=${context.memberId}`);
     }
     return userProfile;
   };

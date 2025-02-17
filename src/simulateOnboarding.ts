@@ -1,7 +1,15 @@
 import { createActor } from 'xstate';
-import { onboardingMachine } from './onboardingMachine'; // Adjust path if needed
-import { createVsParentDbConnection } from './services/faunaService';
+import { onboardingMachine } from './onboardingMachine';
 import dotenv from 'dotenv';
+import { FetchAuth0UserProfileHandler } from './fetchAuth0ProfileHandler';
+import { FetchVsClientHandler } from './fetchVsClientHandler';
+import { InitializeChildDbConnectionHandler } from './initializeChildDbConnectionHandler';
+import { InitializeParentDbConnectionHandler } from './initializeParentDbConnectionHandler';
+import { Pipeline } from './pipeline';
+import { ValidateClientIdHandler } from './validateClientIdHandler';
+import { ValidateOwnerIdHandler } from './validateOwnerIdHandler';
+import { StateMachineContext } from './stateMachineContext';
+
 dotenv.config();
 /**
  * This simulation has five banks:
@@ -11,29 +19,61 @@ dotenv.config();
  *    after they've connected. They can do data import / scoring after finishing.
  */
 const simulateFiveBanksParallel = async () => {
-  console.log('🔹 Initialize Parent Db Connection');
+  let context: StateMachineContext = {
+    memberId: process.argv[2],
+    clientId: process.argv[3],
+    vsClient: null,
+    parentDbConnection: null,
+    childDbConnection: null,
+    auth0UserToken: '',
+    process_name: undefined,
+    startTime: null,
+    endTime: null,
+    auth0FetchTime: null,
+    errors: undefined,
+    processedSummary: undefined,
+    webhookReceivedTimestamps: undefined,
+    processedItems: undefined,
+    isOnboarded: false,
+    plaidItemsPollCount: 0,
+    plaidItemsConnectionsQueue: [],
+    bankConnectionSuccesses: [],
+    bankConnectionFailures: [],
+    searchQueue: {},
+    webhookSearchFailures: [],
+    pendingImports: new Set<string>(),
+    dataImportFailures: [],
+    scoringFailures: [],
+    onboarded: false
+  };
 
-  if (!process.env.FAUNA_DATABASE_VS_PARENT_ROOT_KEY) {
-    throw new Error('FAUNA_DATABASE_VS_PARENT_ROOT_KEY is undefined');
-  }
-  const parentDbConnection = await createVsParentDbConnection(
-    process.env.FAUNA_DATABASE_VS_PARENT_ROOT_KEY!
-  );
+  const preAmble = new Pipeline()
+    .use(new ValidateOwnerIdHandler())
+    .use(new ValidateClientIdHandler())
+    .use(new InitializeParentDbConnectionHandler())
+    .use(new FetchVsClientHandler())
+    .use(new InitializeChildDbConnectionHandler())
+    .use(new FetchAuth0UserProfileHandler());
 
-  console.log('🔹 SUCCESS: Initialize Parent Db Connection');
+  // Execute pipeline
+  await preAmble.execute(context);
 
-  // 1) Create & start the actor
-  const actor = createActor(onboardingMachine, {
+  // 1) Create & start the agent
+  const onboardingActor = createActor(onboardingMachine, {
     input: {
       clientId: process.argv[3],
       memberId: process.argv[2],
-      parentDbConnection
+      parentDbConnection: context.parentDbConnection!,
+      childDbConnection: context.childDbConnection!
     }
   }).start();
 
+  onboardingActor.subscribe((state) => {
+    console.log('🚥 Transition:', state.value);
+  });
   // Helper to log state + context
   function logState(label: string) {
-    const snapshot = actor.getSnapshot();
+    const snapshot = onboardingActor.getSnapshot();
     console.log(`\n[${label}]`);
     console.log('State:', snapshot.value);
     console.log('Context:', snapshot.context);
@@ -66,25 +106,25 @@ const simulateFiveBanksParallel = async () => {
 
   // 2s: bank1 connects
   setTimeout(() => {
-    actor.send({ type: 'BANK_CONNECTED', itemId: 'bank1' });
+    onboardingActor.send({ type: 'BANK_CONNECTED', itemId: 'bank1' });
     logState('bank1 connected');
   }, 2000);
 
   // 3s: bank2 connects
   //   setTimeout(() => {
-  //     actor.send({ type: 'BANK_CONNECTED', itemId: 'bank2' });
+  //     onboardingActor.send({ type: 'BANK_CONNECTED', itemId: 'bank2' });
   //     logState('bank2 connected');
   //   }, 3000);
 
   //   // 4s: bank1 => HISTORICAL_UPDATE => triggers data import
   //   setTimeout(() => {
-  //     actor.send({ type: 'HISTORICAL_UPDATE', payload: { itemId: 'bank1' } });
+  //     onboardingActor.send({ type: 'HISTORICAL_UPDATE', payload: { itemId: 'bank1' } });
   //     logState('bank1 webhook => data import');
   //   }, 4000);
 
   //   // 5s: bank1 => data import complete => triggers scoring
   //   setTimeout(() => {
-  //     actor.send({
+  //     onboardingActor.send({
   //       type: 'DATA_IMPORT_COMPLETE',
   //       payload: { itemId: 'bank1' }
   //     });
@@ -93,37 +133,37 @@ const simulateFiveBanksParallel = async () => {
 
   //   // 6s: scoring completes for bank1 => bank1 fully done
   //   setTimeout(() => {
-  //     actor.send({ type: 'SCORING_COMPLETE' });
+  //     onboardingActor.send({ type: 'SCORING_COMPLETE' });
   //     logState('bank1 scoring complete => bank1 done');
   //   }, 6000);
 
   //   // 7s: bank3 connects
   //   setTimeout(() => {
-  //     actor.send({ type: 'BANK_CONNECTED', itemId: 'bank3' });
+  //     onboardingActor.send({ type: 'BANK_CONNECTED', itemId: 'bank3' });
   //     logState('bank3 connected');
   //   }, 7000);
 
   //   // 8s: bank4 connects
   //   setTimeout(() => {
-  //     actor.send({ type: 'BANK_CONNECTED', itemId: 'bank4' });
+  //     onboardingActor.send({ type: 'BANK_CONNECTED', itemId: 'bank4' });
   //     logState('bank4 connected');
   //   }, 8000);
 
   //   // 8.5s: bank5 connects
   //   setTimeout(() => {
-  //     actor.send({ type: 'BANK_CONNECTED', itemId: 'bank5' });
+  //     onboardingActor.send({ type: 'BANK_CONNECTED', itemId: 'bank5' });
   //     logState('bank5 connected');
   //   }, 8500);
 
   // 9s: user finishes => onboarded = true, no more connections
   setTimeout(() => {
-    actor.send({ type: 'USER_CLICK_FINISH' });
+    onboardingActor.send({ type: 'USER_CLICK_FINISH' });
     logState('User clicked finish => bankConnection done');
   }, 3000);
 
   //   // 10s: bank2 => HISTORICAL_UPDATE => triggers data import
   //   setTimeout(() => {
-  //     actor.send({
+  //     onboardingActor.send({
   //       type: 'HISTORICAL_UPDATE',
   //       payload: { itemId: 'bank2' }
   //     });
@@ -132,7 +172,7 @@ const simulateFiveBanksParallel = async () => {
 
   //   // 11s: bank2 => data import complete => triggers scoring
   //   setTimeout(() => {
-  //     actor.send({
+  //     onboardingActor.send({
   //       type: 'DATA_IMPORT_COMPLETE',
   //       payload: { itemId: 'bank2' }
   //     });
@@ -141,13 +181,13 @@ const simulateFiveBanksParallel = async () => {
 
   //   // 12s: scoring completes (bank2 done)
   //   setTimeout(() => {
-  //     actor.send({ type: 'SCORING_COMPLETE' });
+  //     onboardingActor.send({ type: 'SCORING_COMPLETE' });
   //     logState('bank2 scoring complete');
   //   }, 12000);
 
   //   // 12.5s: bank3 => HISTORICAL_UPDATE => triggers data import
   //   setTimeout(() => {
-  //     actor.send({
+  //     onboardingActor.send({
   //       type: 'HISTORICAL_UPDATE',
   //       payload: { itemId: 'bank3' }
   //     });
@@ -156,7 +196,7 @@ const simulateFiveBanksParallel = async () => {
 
   //   // 13s: bank3 => data import complete => triggers scoring
   //   setTimeout(() => {
-  //     actor.send({
+  //     onboardingActor.send({
   //       type: 'DATA_IMPORT_COMPLETE',
   //       payload: { itemId: 'bank3' }
   //     });
@@ -165,7 +205,7 @@ const simulateFiveBanksParallel = async () => {
 
   //   // 13.5s: bank4 => HISTORICAL_UPDATE => data import
   //   setTimeout(() => {
-  //     actor.send({
+  //     onboardingActor.send({
   //       type: 'HISTORICAL_UPDATE',
   //       payload: { itemId: 'bank4' }
   //     });
@@ -174,7 +214,7 @@ const simulateFiveBanksParallel = async () => {
 
   //   // 14s: bank4 => data import complete => triggers scoring
   //   setTimeout(() => {
-  //     actor.send({
+  //     onboardingActor.send({
   //       type: 'DATA_IMPORT_COMPLETE',
   //       payload: { itemId: 'bank4' }
   //     });
@@ -183,7 +223,7 @@ const simulateFiveBanksParallel = async () => {
 
   //   // 14.5s: bank5 => HISTORICAL_UPDATE => data import
   //   setTimeout(() => {
-  //     actor.send({
+  //     onboardingActor.send({
   //       type: 'HISTORICAL_UPDATE',
   //       payload: { itemId: 'bank5' }
   //     });
@@ -192,7 +232,7 @@ const simulateFiveBanksParallel = async () => {
 
   //   // 15s: bank5 => data import complete => triggers scoring => done
   //   setTimeout(() => {
-  //     actor.send({
+  //     onboardingActor.send({
   //       type: 'DATA_IMPORT_COMPLETE',
   //       payload: { itemId: 'bank5' }
   //     });
@@ -201,7 +241,7 @@ const simulateFiveBanksParallel = async () => {
 
   //   // 16s: final scoring complete => finalSummary
   //   setTimeout(() => {
-  //     actor.send({ type: 'SCORING_COMPLETE' });
+  //     onboardingActor.send({ type: 'SCORING_COMPLETE' });
   //     logState('final scoring complete => finalSummary');
   //   }, 16000);
 };
