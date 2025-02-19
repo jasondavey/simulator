@@ -1,8 +1,9 @@
 import { Client } from 'fauna';
-import { VeraScoreClient, VsPlaidItem } from './db/models';
+import { Auth0Profile, VeraScoreClient } from './db/models';
 
 export interface StateMachineContext {
   onboarded: boolean;
+  auth0UserProfile: Auth0Profile;
   bankConnectionSuccesses: string[];
   bankConnectionFailures: string[];
 
@@ -34,3 +35,37 @@ export interface StateMachineContext {
   childDbConnection: Client | null;
   vsClient: VeraScoreClient | null;
 }
+
+export const createInitialContext = (): StateMachineContext => {
+  return {
+    onboarded: false,
+    auth0UserProfile: {} as Auth0Profile,
+    bankConnectionSuccesses: [],
+    bankConnectionFailures: [],
+
+    searchQueue: {},
+    webhookSearchFailures: [],
+
+    pendingImports: new Set<string>(),
+    dataImportFailures: [],
+
+    scoringFailures: [],
+    plaidItemsConnectionsQueue: [],
+    plaidItemsPollCount: 0,
+    isOnboarded: false,
+    errors: null,
+    processedSummary: null,
+    webhookReceivedTimestamps: null,
+    processedItems: null,
+    auth0UserToken: '',
+    process_name: null,
+    memberId: '',
+    clientId: '',
+    startTime: null,
+    endTime: null,
+    auth0FetchTime: null,
+    parentDbConnection: null,
+    childDbConnection: null,
+    vsClient: null
+  };
+};
