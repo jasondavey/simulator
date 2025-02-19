@@ -1,71 +1,161 @@
 import { Client } from 'fauna';
-import { Auth0Profile, VeraScoreClient } from './db/models';
+
+export interface Auth0UserMetadata {
+  firstName: string;
+  middleName: string;
+  lastName: string;
+  phoneNumber: string;
+  companyName: string;
+  licenseNumber: string;
+  address: string;
+  yearlyGrossIncome?: number;
+  ssnOrItin?: string;
+}
+
+export interface Auth0UserProfile {
+  app_metadata: any;
+  user_id: string;
+  email: string;
+  username: string;
+  email_verified: boolean;
+  picture: string;
+  name: string;
+  sub: string;
+  user_metadata: Auth0UserMetadata;
+  created_at: string;
+}
 
 export interface StateMachineContext {
+  process_name: string;
+  startTime: number;
+  endTime: number;
+  auth0FetchTime: number;
+  vsClient: any;
+  parentDbConnection?: Client;
+  childDbConnection?: Client;
+  clientId: string;
+  memberId: string;
   onboarded: boolean;
-  auth0UserProfile: Auth0Profile;
+
   bankConnectionSuccesses: string[];
   bankConnectionFailures: string[];
 
-  // Webhook search concurrency
-  searchQueue: Record<string, number>;
+  searchQueue: Record<string, any>;
   webhookSearchFailures: string[];
 
-  // Data import concurrency
   pendingImports: Set<string>;
   dataImportFailures: string[];
 
-  // Scoring concurrency
   scoringFailures: string[];
-  plaidItemsConnectionsQueue: string[];
+
+  plaidItemsConnectionsQueue: any[];
   plaidItemsPollCount: number;
   isOnboarded: boolean;
-  errors: any;
+  errors: any[];
+
   processedSummary: any;
-  webhookReceivedTimestamps: any;
-  processedItems: any;
+  webhookReceivedTimestamps: Record<string, number>;
+  processedItems: any[];
   auth0UserToken: string;
-  process_name: any;
-  memberId: string;
-  clientId: string;
-  startTime: number | null;
-  endTime: number | null;
-  auth0FetchTime: number | null;
-  parentDbConnection: Client | null;
-  childDbConnection: Client | null;
-  vsClient: VeraScoreClient | null;
+  processedWebhookItems: any[];
+  webhookProcessingErrors: any[];
+  webhookProcessingSuccesses: any[];
+  auth0UserProfile: Auth0UserProfile;
 }
 
-export const createInitialContext = (): StateMachineContext => {
+interface FactoryOptions {
+  process_name?: string;
+  clientId?: string;
+  memberId?: string;
+  parentDbConnection?: Client;
+  childDbConnection?: Client;
+  auth0UserToken?: string;
+}
+
+export const createInitialContext = (
+  options: FactoryOptions = {}
+): StateMachineContext => {
+  const defaultAuth0Profile: Auth0UserProfile = {
+    app_metadata: {},
+    user_id: '',
+    email: '',
+    username: '',
+    email_verified: false,
+    picture: '',
+    name: '',
+    sub: '',
+    user_metadata: {
+      firstName: '',
+      middleName: '',
+      lastName: '',
+      phoneNumber: '',
+      companyName: '',
+      licenseNumber: '',
+      address: ''
+    },
+    created_at: new Date().toISOString()
+  };
+
   return {
+    // Process metadata
+    process_name: options.process_name || 'default_process',
+    startTime: 0,
+    endTime: 0,
+    auth0FetchTime: 0,
+
+    // Database connections and clients
+    vsClient: null,
+    parentDbConnection: options.parentDbConnection,
+    childDbConnection: options.childDbConnection,
+
+    // User identification
+    clientId: options.clientId || '',
+    memberId: options.memberId || '',
     onboarded: false,
-    auth0UserProfile: {} as Auth0Profile,
+    isOnboarded: false,
+
+    // Bank connection tracking
     bankConnectionSuccesses: [],
     bankConnectionFailures: [],
 
+    // Webhook processing
     searchQueue: {},
     webhookSearchFailures: [],
+    webhookReceivedTimestamps: {},
+    processedWebhookItems: [],
+    webhookProcessingErrors: [],
+    webhookProcessingSuccesses: [],
 
+    // Data import tracking
     pendingImports: new Set<string>(),
     dataImportFailures: [],
 
+    // Scoring tracking
     scoringFailures: [],
+
+    // Plaid specific tracking
     plaidItemsConnectionsQueue: [],
     plaidItemsPollCount: 0,
-    isOnboarded: false,
-    errors: null,
+
+    // Error handling
+    errors: [],
+
+    // Process tracking
     processedSummary: null,
-    webhookReceivedTimestamps: null,
-    processedItems: null,
-    auth0UserToken: '',
-    process_name: null,
-    memberId: '',
-    clientId: '',
-    startTime: null,
-    endTime: null,
-    auth0FetchTime: null,
-    parentDbConnection: null,
-    childDbConnection: null,
-    vsClient: null
+    processedItems: [],
+
+    // Authentication
+    auth0UserToken: options.auth0UserToken || '',
+    auth0UserProfile: defaultAuth0Profile
   };
 };
+
+// Usage example:
+/*
+const context = createInitialContext({
+  process_name: 'bank_connection',
+  clientId: 'client123',
+  memberId: 'member456',
+  auth0UserToken: 'token789'
+});
+*/

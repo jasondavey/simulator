@@ -9,7 +9,10 @@ import { ValidateOwnerIdHandler } from './validateOwnerIdHandler';
 import { InitializeParentDbConnectionHandler } from './initializeParentDbConnectionHandler';
 import { InitializeChildDbConnectionHandler } from './initializeChildDbConnectionHandler';
 import { MailGunService } from './services/mailgunService';
-import { StateMachineContext } from './stateMachineContext';
+import {
+  createInitialContext,
+  StateMachineContext
+} from './stateMachineContext';
 
 dotenv.config();
 
@@ -42,39 +45,11 @@ async function main() {
 
     console.log(`🚀 Starting Plaid worker for ownerId=${ownerId}`);
 
-    const context: StateMachineContext = {
-      memberId: ownerId,
-      clientId,
-      startTime: Date.now(),
-      endTime: null,
-      auth0FetchTime: null,
-      processedItems: new Set<string>(),
-      processedSummary: [],
-      webhookReceivedTimestamps: {},
-      errors: [],
-      parentDbConnection: null,
-      childDbConnection: null,
-      vsClient: null,
-
-      plaidItemsPollCount: 0,
-      process_name: process.env.PROCESS_NAME!,
-      auth0UserToken: '',
-      isOnboarded: false,
-      plaidItemsConnectionsQueue: [],
-      onboarded: false,
-      bankConnectionSuccesses: [],
-      bankConnectionFailures: [],
-      searchQueue: {},
-      webhookSearchFailures: [],
-      pendingImports: new Set<string>(),
-      dataImportFailures: [],
-      scoringFailures: []
-    };
+    const context: StateMachineContext = createInitialContext();
 
     // Timeout handler
     timeoutHandle = setTimeout(async () => {
       context.errors.push('⏳ Process timed out!');
-      await MailGunService.sendReportAndExit(context);
     }, TIMEOUT_MS);
 
     const pipeline = new Pipeline()
@@ -96,33 +71,6 @@ async function main() {
     const errorMessage = error instanceof Error ? error.message : String(error);
     errors.push(`Fatal error in main: ${errorMessage}`);
     console.error(`❌ Fatal error in main: ${errorMessage}`);
-    await MailGunService.sendReportAndExit({
-      memberId: 'unknown',
-      clientId: 'unknown',
-      startTime: null,
-      endTime: null,
-      auth0FetchTime: null,
-      processedItems: new Set<string>(),
-      processedSummary: [],
-      webhookReceivedTimestamps: {},
-      errors,
-      parentDbConnection: null,
-      childDbConnection: null,
-      vsClient: null,
-      plaidItemsPollCount: 0,
-      process_name: process.env.PROCESS_NAME!,
-      auth0UserToken: '',
-      isOnboarded: false,
-      plaidItemsConnectionsQueue: [],
-      onboarded: false,
-      bankConnectionSuccesses: [],
-      bankConnectionFailures: [],
-      searchQueue: {},
-      webhookSearchFailures: [],
-      pendingImports: new Set<string>(),
-      dataImportFailures: [],
-      scoringFailures: []
-    });
   }
 }
 

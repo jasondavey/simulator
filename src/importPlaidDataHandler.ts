@@ -18,7 +18,7 @@ export class ImportPlaidDataHandler implements Handler {
     try {
       console.log(`Importing Plaid item data (itemId = ${itemId})`);
 
-      context.processedItems.add(itemId);
+      //context.processedItems.add(itemId);
       const receivedTime = context.webhookReceivedTimestamps[itemId] || null;
       const webhookDelay = receivedTime
         ? `${((Date.now() - receivedTime) / 1000).toFixed(2)} sec`

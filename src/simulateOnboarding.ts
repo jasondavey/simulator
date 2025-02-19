@@ -8,7 +8,10 @@ import { InitializeParentDbConnectionHandler } from './initializeParentDbConnect
 import { Pipeline } from './pipeline';
 import { ValidateClientIdHandler } from './validateClientIdHandler';
 import { ValidateOwnerIdHandler } from './validateOwnerIdHandler';
-import { StateMachineContext } from './stateMachineContext';
+import {
+  createInitialContext,
+  StateMachineContext
+} from './stateMachineContext';
 
 dotenv.config();
 /**
@@ -19,35 +22,11 @@ dotenv.config();
  *    after they've connected. They can do data import / scoring after finishing.
  */
 const simulateFiveBanksParallel = async () => {
-  let context: StateMachineContext = {
-    memberId: process.argv[2],
-    clientId: process.argv[3],
-    vsClient: null,
-    parentDbConnection: null,
-    childDbConnection: null,
-    auth0UserToken: '',
-    process_name: undefined,
-    startTime: null,
-    endTime: null,
-    auth0FetchTime: null,
-    errors: undefined,
-    processedSummary: undefined,
-    webhookReceivedTimestamps: undefined,
-    processedItems: undefined,
-    isOnboarded: false,
-    plaidItemsPollCount: 0,
-    plaidItemsConnectionsQueue: [],
-    bankConnectionSuccesses: [],
-    bankConnectionFailures: [],
-    searchQueue: {},
-    webhookSearchFailures: [],
-    pendingImports: new Set<string>(),
-    dataImportFailures: [],
-    scoringFailures: [],
-    onboarded: false
-  };
+  const context: StateMachineContext = createInitialContext();
+  context.memberId = process.argv[2];
+  context.clientId = process.argv[3];
 
-  const preAmble = new Pipeline()
+  const preTasks = new Pipeline()
     .use(new ValidateOwnerIdHandler())
     .use(new ValidateClientIdHandler())
     .use(new InitializeParentDbConnectionHandler())
@@ -56,28 +35,23 @@ const simulateFiveBanksParallel = async () => {
     .use(new FetchAuth0UserProfileHandler());
 
   // Execute pipeline
-  await preAmble.execute(context);
+  await preTasks.execute(context);
 
   // 1) Create & start the agent
   const onboardingActor = createActor(onboardingMachine, {
-    input: {
-      clientId: process.argv[3],
-      memberId: process.argv[2],
-      parentDbConnection: context.parentDbConnection!,
-      childDbConnection: context.childDbConnection!
-    }
+    input: context as StateMachineContext
   }).start();
 
   onboardingActor.subscribe((state) => {
-    console.log('🚥 Transition:', state.value);
+    console.log('Transition:', state.value);
   });
-  // Helper to log state + context
-  function logState(label: string) {
+
+  const logState = (label: string) => {
     const snapshot = onboardingActor.getSnapshot();
     console.log(`\n[${label}]`);
     console.log('State:', snapshot.value);
     console.log('Context:', snapshot.context);
-  }
+  };
 
   logState('Initial');
 

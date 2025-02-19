@@ -32,7 +32,7 @@
       "program": "${workspaceFolder}/node_modules/ts-node/dist/bin.js",
       "args": [
         "${workspaceFolder}/src/simulateOnboarding.ts",
-        "auth0|6723a660523e8e7b009381f4",
+        "auth0|67b5eaa77fad19ce64d6d59b",
         "f7b3e93e-1a94-4b12-9e3c-1e4b9b4f3d26"
       ],
       "console": "integratedTerminal"

@@ -1,38 +1,10 @@
-import { Client } from 'fauna';
 import { setup, assign } from 'xstate';
 import { MailGunService } from './services/mailgunService';
 import { startPollingPlaidWebhooks } from './pollPlaidWebhooks';
-import { StateMachineContext } from './stateMachineContext';
-
-interface OnboardingInput {
-  clientId: string;
-  memberId: string;
-  parentDbConnection: Client;
-  childDbConnection: Client;
-}
-
-// interface OnboardingContext {
-//   parentDbConnection: Client | null;
-//   childDbConnection: Client | null;
-//   onboarded: boolean;
-//   clientId: string;
-//   memberId: string;
-
-//   // Bank-level successes/failures
-//   bankConnectionSuccesses: string[];
-//   bankConnectionFailures: string[];
-
-//   // Webhook search concurrency
-//   searchQueue: Record<string, number>;
-//   webhookSearchFailures: string[];
-
-//   // Data import concurrency
-//   pendingImports: Set<string>;
-//   dataImportFailures: string[];
-
-//   // Scoring concurrency
-//   scoringFailures: string[];
-// }
+import {
+  createInitialContext,
+  StateMachineContext
+} from './stateMachineContext';
 
 type OnboardingEvent =
   // Bank Connection
@@ -55,7 +27,6 @@ type OnboardingEvent =
 export const onboardingMachine = setup({
   types: {
     context: {} as StateMachineContext,
-    input: {} as OnboardingInput,
     events: {} as OnboardingEvent
   },
 
@@ -66,6 +37,7 @@ export const onboardingMachine = setup({
 
       try {
         await MailGunService.sendEmail(
+          context.auth0UserProfile.email,
           'Onboarding Complete',
           'Congratulations! You are now onboarded.'
         );
@@ -191,43 +163,7 @@ export const onboardingMachine = setup({
 }).createMachine({
   id: 'onboardingMachine',
   initial: 'onboarding',
-  context: ({ input }) => ({
-    process_name: '',
-    startTime: Date.now(),
-    endTime: Date.now(),
-    auth0FetchTime: 0,
-    vsClient: null,
-    parentDbConnection: input.parentDbConnection,
-    childDbConnection: input.childDbConnection,
-    clientId: input.clientId,
-    memberId: input.memberId,
-    onboarded: false,
-
-    bankConnectionSuccesses: [],
-    bankConnectionFailures: [],
-
-    searchQueue: {},
-    webhookSearchFailures: [],
-
-    pendingImports: new Set<string>(),
-    dataImportFailures: [],
-
-    scoringFailures: [],
-
-    plaidItemsConnectionsQueue: [],
-    plaidItemsPollCount: 0,
-    isOnboarded: false,
-    errors: [],
-
-    // Add missing properties
-    processedSummary: null,
-    webhookReceivedTimestamps: {},
-    processedItems: [],
-    auth0UserToken: '',
-    processedWebhookItems: [],
-    webhookProcessingErrors: [],
-    webhookProcessingSuccesses: []
-  }),
+  context: createInitialContext(),
 
   states: {
     //////////////////////////////////////////
@@ -287,7 +223,6 @@ export const onboardingMachine = setup({
             searching: {
               after: {
                 2000: {
-                  internal: true,
                   actions: ['pollForWebhooks']
                 }
               },
@@ -362,25 +297,14 @@ export const onboardingMachine = setup({
       // Automatically start scoring once dataImport => importComplete
       // and scoring => 'idle'
       on: {
-        'xstate.parallel.state.value': [
+        DATA_IMPORT_COMPLETE: [
           {
-            guard: ({ state }: { state: any }) => {
-              const dataImportState = state.value.onboarding.dataImport;
-              const scoringState = state.value.onboarding.scoring;
-              return (
-                dataImportState === 'importComplete' && scoringState === 'idle'
-              );
-            },
-            actions: ({
-              selfSend
-            }: {
-              selfSend: (event: OnboardingEvent) => void;
-            }) => {
-              selfSend({ type: 'BEGIN_SCORING' });
-            }
+            guard: 'noPendingImports',
+            actions: 'removePendingImport',
+            target: '.scoring.scoring'
           }
         ],
-        'BEGIN_SCORING': {
+        BEGIN_SCORING: {
           target: '.scoring.scoring'
         }
       }
