@@ -1,6 +1,6 @@
 import dotenv from 'dotenv';
 import { FetchAuth0UserProfileHandler } from './fetchAuth0ProfileHandler';
-import { FetchPlaidItemsHandler } from './fetchPlaidItemsHandler';
+import { FetchPlaidItemsHandler } from './fetchPlaidItemHandler';
 import { FetchVsClientHandler } from './fetchVsClientHandler';
 import { ImportPlaidDataHandler } from './importPlaidDataHandler';
 import { Pipeline } from './pipeline';

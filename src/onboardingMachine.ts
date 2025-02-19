@@ -46,13 +46,24 @@ export const onboardingMachine = setup({
 
     addBankSuccess: assign({
       bankConnectionSuccesses: ({ context, event }) => {
-        console.log('Current context in addBankSuccess:', context);
+        console.log('Event type:', event.type);
+        console.log(
+          'Current bankConnectionSuccesses:',
+          context.bankConnectionSuccesses
+        );
 
-        if (event.type !== 'BANK_CONNECTED')
-          return context.bankConnectionSuccesses;
-        console.log(`Bank connected: ${event.itemId}`);
+        if (event.type === 'BANK_CONNECTED') {
+          console.log('Event itemId:', event.itemId);
+          console.log('Bank connected:', event.itemId);
+          const newSuccesses = [
+            ...context.bankConnectionSuccesses,
+            event.itemId
+          ];
+          console.log('New bankConnectionSuccesses:', newSuccesses);
+          return newSuccesses;
+        }
 
-        return [...context.bankConnectionSuccesses, event.itemId];
+        return context.bankConnectionSuccesses;
       },
       webhookSearchQueue: ({ context, event }) => {
         if (event.type !== 'BANK_CONNECTED') return context.webhookSearchQueue;
