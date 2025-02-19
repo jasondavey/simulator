@@ -1,4 +1,5 @@
 import { Client } from 'fauna';
+import { WebhookQueueEntry } from './types';
 
 export interface Auth0UserMetadata {
   firstName: string;
@@ -39,9 +40,7 @@ export interface StateMachineContext {
 
   bankConnectionSuccesses: string[];
   bankConnectionFailures: string[];
-
-  searchQueue: Record<string, any>;
-  webhookSearchFailures: string[];
+  webhookSearchQueue: Record<string, WebhookQueueEntry>;
 
   pendingImports: Set<string>;
   dataImportFailures: string[];
@@ -119,8 +118,8 @@ export const createInitialContext = (
     bankConnectionFailures: [],
 
     // Webhook processing
-    searchQueue: {},
-    webhookSearchFailures: [],
+    webhookSearchQueue: {},
+
     webhookReceivedTimestamps: {},
     processedWebhookItems: [],
     webhookProcessingErrors: [],

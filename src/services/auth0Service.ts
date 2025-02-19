@@ -96,7 +96,6 @@ export class Auth0Service {
       throw new HttpError(HttpStatus.NOT_FOUND, `Invalid user id: ${userId}`);
     }
 
-    console.log('User data filtered by Auth0ID:', data);
     return data;
   };
 

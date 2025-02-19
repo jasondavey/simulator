@@ -1,10 +1,10 @@
-import { setup, assign } from 'xstate';
+import { setup, assign, fromPromise } from 'xstate';
 import { MailGunService } from './services/mailgunService';
-import { startPollingPlaidWebhooks } from './pollPlaidWebhooks';
 import {
   createInitialContext,
   StateMachineContext
 } from './stateMachineContext';
+import { EmailInput } from './types';
 
 type OnboardingEvent =
   // Bank Connection
@@ -30,114 +30,144 @@ export const onboardingMachine = setup({
     events: {} as OnboardingEvent
   },
 
-  actions: {
-    // A) Bank Connection
-    markOnboarded: async ({ context }) => {
-      context.onboarded = true;
-
-      try {
-        await MailGunService.sendEmail(
-          context.auth0UserProfile.email,
-          'Onboarding Complete',
-          'Congratulations! You are now onboarded.'
-        );
-      } catch (error) {
-        console.error('Error sending onboarding email:', error);
+  actors: {
+    sendOnboardingCompleteEmail: fromPromise(
+      async ({ input }: { input: EmailInput }) => {
+        await MailGunService.sendEmail(input.email, input.subject, input.body);
+        return { success: true };
       }
-    },
+    )
+  },
 
+  actions: {
     logTimeout: () => {
       console.warn('Bank-connection timed out overall.');
     },
 
-    addBankSuccess: assign(({ context, event }) => {
-      if (event.type !== 'BANK_CONNECTED') return {};
-      console.log(`Bank connected: ${event.itemId}`);
-      // Start polling for webhooks when a bank is connected
-      startPollingPlaidWebhooks(context);
+    addBankSuccess: assign({
+      bankConnectionSuccesses: ({ context, event }) => {
+        console.log('Current context in addBankSuccess:', context);
 
-      return {
-        bankConnectionSuccesses: [
-          ...context.bankConnectionSuccesses,
-          event.itemId
-        ],
-        // Also add itemId to searchQueue so we can poll for webhooks
-        searchQueue: {
-          ...context.searchQueue,
-          [event.itemId]: 0
-        }
-      };
+        if (event.type !== 'BANK_CONNECTED')
+          return context.bankConnectionSuccesses;
+        console.log(`Bank connected: ${event.itemId}`);
+
+        return [...context.bankConnectionSuccesses, event.itemId];
+      },
+      webhookSearchQueue: ({ context, event }) => {
+        if (event.type !== 'BANK_CONNECTED') return context.webhookSearchQueue;
+
+        return {
+          ...context.webhookSearchQueue,
+          [event.itemId]: {
+            status: 'pending' as const,
+            attempts: 0,
+            lastAttempt: Date.now()
+          }
+        };
+      }
     }),
 
-    addBankFailure: assign(({ context, event }) => {
-      if (event.type !== 'BANK_CONNECTION_FAILED') return {};
-      return {
-        bankConnectionFailures: [
-          ...context.bankConnectionFailures,
-          event.itemId
-        ]
-      };
+    addBankFailure: assign({
+      bankConnectionFailures: ({ context, event }) => {
+        if (event.type !== 'BANK_CONNECTION_FAILED')
+          return context.bankConnectionFailures;
+        return [...context.bankConnectionFailures, event.itemId];
+      }
     }),
 
     // B) Webhook Search
-    pollForWebhooks: assign(({ context }) => {
-      const updatedQueue = { ...context.searchQueue };
-      for (const itemId of Object.keys(updatedQueue)) {
-        updatedQueue[itemId] += 10;
+    pollForWebhooks: assign({
+      webhookSearchQueue: ({ context }) => {
+        const updatedQueue = { ...context.webhookSearchQueue };
+        Object.entries(updatedQueue).forEach(([itemId, entry]) => {
+          if (entry.status === 'pending') {
+            updatedQueue[itemId] = {
+              ...entry,
+              attempts: entry.attempts + 1,
+              lastAttempt: Date.now()
+            };
+          }
+        });
+        return updatedQueue;
       }
-      return { searchQueue: updatedQueue };
     }),
 
-    markWebhookSearchFailed: assign(({ context, event }) => {
-      if (event.type !== 'WEBHOOK_SEARCH_FAILED') return {};
-      const { itemId } = event;
-      const updatedQueue = { ...context.searchQueue };
-      delete updatedQueue[itemId];
-      return {
-        webhookSearchFailures: [...context.webhookSearchFailures, itemId],
-        searchQueue: updatedQueue
-      };
+    markWebhookFound: assign({
+      webhookSearchQueue: ({ context, event }) => {
+        if (event.type !== 'HISTORICAL_UPDATE')
+          return context.webhookSearchQueue;
+        return {
+          ...context.webhookSearchQueue,
+          [event.payload.itemId]: {
+            ...context.webhookSearchQueue[event.payload.itemId],
+            status: 'found' as const,
+            foundAt: Date.now()
+          }
+        };
+      }
     }),
 
-    addPendingImport: assign(({ context, event }) => {
-      if (event.type !== 'HISTORICAL_UPDATE') return {};
-      const newSet = new Set(context.pendingImports);
-      newSet.add(event.payload.itemId);
-
-      const updatedQueue = { ...context.searchQueue };
-      delete updatedQueue[event.payload.itemId];
-
-      return {
-        pendingImports: newSet,
-        searchQueue: updatedQueue
-      };
+    markWebhookSearchFailed: assign({
+      webhookSearchQueue: ({ context, event }) => {
+        if (event.type !== 'WEBHOOK_SEARCH_FAILED')
+          return context.webhookSearchQueue;
+        return {
+          ...context.webhookSearchQueue,
+          [event.itemId]: {
+            ...context.webhookSearchQueue[event.itemId],
+            status: 'failed' as const,
+            lastAttempt: Date.now()
+          }
+        };
+      }
     }),
 
+    addPendingImport: assign({
+      pendingImports: ({ context, event }) => {
+        if (event.type !== 'HISTORICAL_UPDATE') return context.pendingImports;
+        const newSet = new Set(context.pendingImports);
+        newSet.add(event.payload.itemId);
+        return newSet;
+      },
+      webhookSearchQueue: ({ context, event }) => {
+        if (event.type !== 'HISTORICAL_UPDATE')
+          return context.webhookSearchQueue;
+        const { [event.payload.itemId]: _, ...rest } =
+          context.webhookSearchQueue;
+        return rest;
+      }
+    }),
     // C) Data Import
-    removePendingImport: assign(({ context, event }) => {
-      if (event.type !== 'DATA_IMPORT_COMPLETE') return {};
-      const newSet = new Set(context.pendingImports);
-      newSet.delete(event.payload.itemId);
-      return { pendingImports: newSet };
+    removePendingImport: assign({
+      pendingImports: ({ context, event }) => {
+        if (event.type !== 'DATA_IMPORT_COMPLETE')
+          return context.pendingImports;
+        const newSet = new Set(context.pendingImports);
+        newSet.delete(event.payload.itemId);
+        return newSet;
+      }
     }),
-
-    markImportFailed: assign(({ context, event }) => {
-      if (event.type !== 'DATA_IMPORT_FAILED') return {};
-      const { itemId } = event.payload;
-      const newSet = new Set(context.pendingImports);
-      newSet.delete(itemId);
-      return {
-        pendingImports: newSet,
-        dataImportFailures: [...context.dataImportFailures, itemId]
-      };
+    markImportFailed: assign({
+      pendingImports: ({ context, event }) => {
+        if (event.type !== 'DATA_IMPORT_FAILED') return context.pendingImports;
+        const newSet = new Set(context.pendingImports);
+        newSet.delete(event.payload.itemId);
+        return newSet;
+      },
+      dataImportFailures: ({ context, event }) => {
+        if (event.type !== 'DATA_IMPORT_FAILED')
+          return context.dataImportFailures;
+        return [...context.dataImportFailures, event.payload.itemId];
+      }
     }),
 
     // D) Scoring
-    markScoringFailed: assign(({ context, event }) => {
-      if (event.type !== 'SCORING_FAILED') return {};
-      return {
-        scoringFailures: [...context.scoringFailures, 'scoringFailed']
-      };
+    markScoringFailed: assign({
+      scoringFailures: ({ context, event }) => {
+        if (event.type !== 'SCORING_FAILED') return context.scoringFailures;
+        return [...context.scoringFailures, 'scoringFailed'];
+      }
     }),
 
     // E) Final summary
@@ -151,7 +181,12 @@ export const onboardingMachine = setup({
         context.bankConnectionSuccesses
       );
       console.log('Bank Connection Failures:', context.bankConnectionFailures);
-      console.log('Webhook Search Failures:', context.webhookSearchFailures);
+      console.log(
+        'Webhook Search Failures:',
+        Object.entries(context.webhookSearchQueue)
+          .filter(([_, entry]) => entry.status === 'failed')
+          .map(([itemId]) => itemId)
+      );
       console.log('Data Import Failures:', context.dataImportFailures);
       console.log('Scoring Failures:', context.scoringFailures);
     }
@@ -163,8 +198,10 @@ export const onboardingMachine = setup({
 }).createMachine({
   id: 'onboardingMachine',
   initial: 'onboarding',
-  context: createInitialContext(),
-
+  context: ({ input }) => ({
+    ...createInitialContext(),
+    ...(input as StateMachineContext) // Merge input context
+  }),
   states: {
     //////////////////////////////////////////
     // 1) The parent "onboarding" state
@@ -188,29 +225,48 @@ export const onboardingMachine = setup({
                 }
               },
               on: {
-                // Remain in "connecting" so user can connect multiple banks
                 BANK_CONNECTED: {
                   actions: 'addBankSuccess'
-                  // If you want to finalize after one success:
-                  //target: 'doneConnecting'
                 },
                 BANK_CONNECTION_FAILED: {
                   actions: 'addBankFailure'
-                  // Possibly target a different final or stay in "connecting"
-                  // target: 'timedOut'
                 },
                 TIME_EXCEEDED: {
                   target: 'timedOut',
                   actions: 'logTimeout'
                 },
                 USER_CLICK_FINISH: {
-                  target: 'doneConnecting',
-                  actions: 'markOnboarded'
+                  target: 'sendOnboardingCompleteEmail',
+                  actions: assign({ onboarded: true })
+                }
+              }
+            },
+            sendOnboardingCompleteEmail: {
+              invoke: {
+                id: 'sendOnboardingCompleteEmail',
+                src: 'sendOnboardingCompleteEmail',
+                input: ({ context }) => ({
+                  email: context.auth0UserProfile.email,
+                  subject: 'Onboarding Complete',
+                  body: 'Congratulations! You are now onboarded.'
+                }),
+                onDone: {
+                  target: 'doneConnecting'
+                },
+                onError: {
+                  target: 'failure',
+                  actions: assign({
+                    errors: ({ context, event }) => [
+                      ...(context.errors || []),
+                      { type: 'EMAIL_ERROR', message: event.error }
+                    ]
+                  })
                 }
               }
             },
             timedOut: { type: 'final' },
-            doneConnecting: { type: 'final' }
+            doneConnecting: { type: 'final' },
+            failure: { type: 'final' }
           }
         },
 

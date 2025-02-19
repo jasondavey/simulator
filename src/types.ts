@@ -19,3 +19,28 @@ export type WorkflowEvent =
   | { type: 'TIMEOUT' }
   | { type: 'FAIL'; error: string }
   | { type: 'DONE' };
+
+export type EmailInput = {
+  email: string;
+  subject: string;
+  body: string;
+};
+
+export type WebhookSearchStatus = 'pending' | 'found' | 'failed';
+
+export interface WebhookQueueEntry {
+  status: WebhookSearchStatus;
+  attempts: number;
+  lastAttempt: number;
+  foundAt?: number;
+}
+
+export type WebhookSearchQueue = Record<
+  string,
+  {
+    status: WebhookSearchStatus;
+    attempts: number;
+    lastAttempt: number;
+    foundAt?: number;
+  }
+>;

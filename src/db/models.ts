@@ -30,9 +30,11 @@ export interface Auth0Profile {
   app_metadata: any;
   user_id: string;
   email: string;
+  email_verified: boolean;
   username: string;
   name: string;
   sub: string;
+  picture: string;
   user_metadata: {
     firstName: string;
     middleName: string;
