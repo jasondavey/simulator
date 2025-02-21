@@ -15,8 +15,9 @@ dotenv.config();
 const simulateFiveBanksParallel = async () => {
   const pipelineContext = createInitialContext({
     process_name: 'Onboarding Plaid Sync',
+    memberId: process.argv[2],
     clientId: process.argv[3],
-    memberId: process.argv[2]
+    bankConnectionId: process.argv[4]
   });
 
   const preTasks = new Pipeline()

@@ -1,10 +1,12 @@
-import { setup, assign, fromPromise } from 'xstate';
+import { setup, assign, fromPromise, raise } from 'xstate';
 import { MailGunService } from './services/mailgunService';
 import {
   createInitialContext,
   StateMachineContext
 } from './stateMachineContext';
 import { EmailInput } from './types';
+import PlaidWebhookDao from './db/plaidWebhookDao';
+import { Client } from 'fauna';
 
 type OnboardingEvent =
   // Bank Connection
@@ -35,6 +37,26 @@ export const onboardingMachine = setup({
       async ({ input }: { input: EmailInput }) => {
         await MailGunService.sendEmail(input.email, input.subject, input.body);
         return { success: true };
+      }
+    ),
+    searchWebhooksActor: fromPromise(
+      async ({
+        input
+      }: {
+        input: {
+          itemId: string;
+          dbConnection: Client;
+          attempts: number;
+        };
+      }) => {
+        const response = await PlaidWebhookDao.getWebhookReadyForImportByItemId(
+          input.dbConnection,
+          input.itemId
+        );
+        if (!response.ok) {
+          throw new Error('Webhook search failed');
+        }
+        return await response.json();
       }
     )
   },
@@ -285,20 +307,77 @@ export const onboardingMachine = setup({
         // (B) Webhook Search
         ////////////////////////////////
         webhookSearch: {
-          initial: 'searching',
+          initial: 'checking',
           states: {
-            searching: {
-              after: {
-                2000: {
-                  actions: ['pollForWebhooks']
-                }
-              },
-              on: {
-                WEBHOOK_SEARCH_FAILED: {
-                  actions: 'markWebhookSearchFailed'
+            checking: {
+              always: [
+                {
+                  // If there are pending webhooks, go to searching
+                  guard: ({ context }) =>
+                    Object.values(context.webhookSearchQueue).some(
+                      (entry) => entry.status === 'pending'
+                    ),
+                  target: 'searching'
                 },
-                HISTORICAL_UPDATE: {
-                  actions: 'addPendingImport'
+                {
+                  // If no pending webhooks, go to idle
+                  target: 'idle'
+                }
+              ]
+            },
+            idle: {
+              after: {
+                2000: 'checking' // Check again after delay
+              }
+            },
+            searching: {
+              invoke: {
+                src: 'searchWebhooksActor',
+                input: ({ context }) => {
+                  const pendingItem = Object.entries(
+                    context.webhookSearchQueue
+                  ).find(([_, entry]) => entry.status === 'pending');
+
+                  if (!pendingItem) {
+                    return {
+                      itemId: '',
+                      dbConnection: context.childDbConnection!,
+                      attempts: 0
+                    };
+                  }
+
+                  const [itemId, entry] = pendingItem;
+                  return {
+                    itemId,
+                    dbConnection: context.childDbConnection!,
+                    attempts: entry.attempts
+                  };
+                },
+                onDone: {
+                  actions: [
+                    assign({
+                      webhookSearchQueue: ({ context, event }) => {
+                        const foundItemId = event.output.itemId;
+                        return {
+                          ...context.webhookSearchQueue,
+                          [foundItemId]: {
+                            ...context.webhookSearchQueue[foundItemId],
+                            status: 'found' as const,
+                            foundAt: Date.now()
+                          }
+                        };
+                      }
+                    }),
+                    raise(({ event }) => ({
+                      type: 'HISTORICAL_UPDATE',
+                      payload: { itemId: event.output.itemId }
+                    }))
+                  ],
+                  target: 'checking' // Go back to checking for more webhooks
+                },
+                onError: {
+                  actions: 'markWebhookSearchFailed',
+                  target: 'checking' // Check again even after error
                 }
               }
             }

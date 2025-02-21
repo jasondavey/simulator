@@ -33,7 +33,8 @@
       "args": [
         "${workspaceFolder}/src/simulateOnboarding.ts",
         "auth0|67b5eaa77fad19ce64d6d59b",
-        "f7b3e93e-1a94-4b12-9e3c-1e4b9b4f3d26"
+        "f7b3e93e-1a94-4b12-9e3c-1e4b9b4f3d26",
+        "XnDWjxKy6KUlmEaLPaqesWw4lRXMyNud5klmy"
       ],
       "console": "integratedTerminal"
     }

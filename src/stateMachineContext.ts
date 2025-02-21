@@ -36,6 +36,7 @@ export interface StateMachineContext {
   childDbConnection?: Client;
   clientId: string;
   memberId: string;
+  bankConnectionId: string;
   onboarded: boolean;
 
   bankConnectionSuccesses: string[];
@@ -66,6 +67,7 @@ interface FactoryOptions {
   process_name?: string;
   clientId?: string;
   memberId?: string;
+  bankConnectionId?: string;
   parentDbConnection?: Client;
   childDbConnection?: Client;
   auth0UserToken?: string;
@@ -110,6 +112,7 @@ export const createInitialContext = (
     // User identification
     clientId: options.clientId || '',
     memberId: options.memberId || '',
+    bankConnectionId: options.bankConnectionId || '',
     onboarded: false,
     isOnboarded: false,
 
@@ -148,13 +151,3 @@ export const createInitialContext = (
     auth0UserProfile: defaultAuth0Profile
   };
 };
-
-// Usage example:
-/*
-const context = createInitialContext({
-  process_name: 'bank_connection',
-  clientId: 'client123',
-  memberId: 'member456',
-  auth0UserToken: 'token789'
-});
-*/
