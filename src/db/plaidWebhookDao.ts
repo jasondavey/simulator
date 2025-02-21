@@ -31,11 +31,19 @@ export class PlaidWebhookDao {
     webhook: VsPlaidWebhook
   ): Promise<VsPlaidWebhook> => {
     try {
-      //property "is_processed" is a computed field, remove before upsert
+      // Property "is_processed" is a computed field, remove before upsert
       const { id, coll, is_processed, ts, ttl, ...webhookDto } = webhook;
+
+      // Log the webhookDto object for debugging
+      console.log('Upserting webhook:', webhookDto);
+
       const queryResult = await dbConnection.query<VsPlaidWebhook>(
         fql`plaidWebhookUpsert(${webhookDto})`
       );
+
+      // Log the query result for debugging
+      console.log('Upsert result:', queryResult);
+
       return queryResult.data;
     } catch (error: any) {
       console.error('Error creating a VsPlaidWebhook:', error);
