@@ -70,7 +70,7 @@ const simulateFiveBanksParallel = async () => {
       onboardingActor.getSnapshot().value
     );
 
-    onboardingActor.send({ type: 'BANK_CONNECTED', itemId: 'bank1' });
+    onboardingActor.send({ type: 'BANK_CONNECTED', itemId: pipelineContext.bankConnectionId });
 
     // Check immediate state after event
     const immediateSnapshot = onboardingActor.getSnapshot();

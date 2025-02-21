@@ -49,14 +49,14 @@ export const onboardingMachine = setup({
           attempts: number;
         };
       }) => {
-        const response = await PlaidWebhookDao.getWebhookReadyForImportByItemId(
+        const webhookData = await PlaidWebhookDao.getWebhookReadyForImportByItemId(
           input.dbConnection,
           input.itemId
         );
-        if (!response.ok) {
-          throw new Error('Webhook search failed');
+        if (!webhookData) {
+          throw new Error('No webhook data found');
         }
-        return await response.json();
+        return webhookData;
       }
     )
   },
