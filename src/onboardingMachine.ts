@@ -55,7 +55,7 @@ export const onboardingMachine = setup({
             input.itemId
           );
         if (!webhookData) {
-          throw new Error('No webhook data found');
+          return null; // No webhook found, continue searching if not onboarded
         }
 
         // Mark the webhook as processed to prevent reuse
@@ -261,10 +261,13 @@ export const onboardingMachine = setup({
           states: {
             connecting: {
               after: {
-                10000: {
-                  target: 'timedOut',
-                  actions: 'logTimeout'
-                }
+                600000: [
+                  {
+                    guard: ({ context }) => !context.onboarded,
+                    target: 'timedOut',
+                    actions: 'logTimeout'
+                  }
+                ]
               },
               on: {
                 BANK_CONNECTED: {
@@ -366,7 +369,7 @@ export const onboardingMachine = setup({
                   actions: [
                     assign({
                       webhookSearchQueue: ({ context, event }) => {
-                        const foundItemId = event.output.itemId;
+                        const foundItemId = event.output?.itemId ?? '';
                         return {
                           ...context.webhookSearchQueue,
                           [foundItemId]: {
@@ -379,7 +382,7 @@ export const onboardingMachine = setup({
                     }),
                     raise(({ event }) => ({
                       type: 'HISTORICAL_UPDATE',
-                      payload: { itemId: event.output.itemId }
+                      payload: { itemId: event.output?.itemId ?? '' }
                     }))
                   ],
                   target: 'checking' // Go back to checking for more webhooks
