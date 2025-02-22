@@ -4,30 +4,6 @@
     {
       "type": "node",
       "request": "launch",
-      "name": "Onboarding Plaid Sync",
-      "program": "${workspaceFolder}/node_modules/ts-node/dist/bin.js",
-      "args": [
-        "${workspaceFolder}/src/plaidWorker.ts",
-        "auth0|6723a660523e8e7b009381f4",
-        "f7b3e93e-1a94-4b12-9e3c-1e4b9b4f3d26"
-      ],
-      "console": "integratedTerminal"
-    },
-    {
-      "type": "node",
-      "request": "launch",
-      "name": "Onboarding State Machine",
-      "program": "${workspaceFolder}/node_modules/ts-node/dist/bin.js",
-      "args": [
-        "${workspaceFolder}/src/index.ts",
-        "auth0|6723a660523e8e7b009381f4",
-        "f7b3e93e-1a94-4b12-9e3c-1e4b9b4f3d26"
-      ],
-      "console": "integratedTerminal"
-    },
-    {
-      "type": "node",
-      "request": "launch",
       "name": "Onboarding Simulator",
       "program": "${workspaceFolder}/node_modules/ts-node/dist/bin.js",
       "args": [
