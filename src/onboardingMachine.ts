@@ -67,7 +67,7 @@ export const onboardingMachine = setup({
             timestamp: new Date().toISOString()
           });
 
-          return { success: true };
+          return { success: true, itemId };
         } catch (error) {
           console.error('[Plaid Import] Failed to import data', {
             itemId,
@@ -117,6 +117,43 @@ export const onboardingMachine = setup({
   },
 
   actions: {
+    handleWebhookSearchResult: assign({
+      webhookSearchQueue: ({ context, event }: { context: StateMachineContext; event: any }) => {
+        if (!event.output) {
+          console.info('[Webhook Search] No webhook found for item, continuing search');
+          return context.webhookSearchQueue;
+        }
+
+        const foundItemId = event.output.itemId;
+        return {
+          ...context.webhookSearchQueue,
+          [foundItemId]: {
+            ...context.webhookSearchQueue[foundItemId],
+            status: 'found' as const,
+            foundAt: Date.now()
+          }
+        };
+      }
+    }),
+
+    raiseHistoricalUpdate: ({ event }: { event: any }) => {
+      if (event.output) {
+        const historicalUpdate: OnboardingEvent = {
+          type: 'HISTORICAL_UPDATE',
+          payload: { itemId: event.output.itemId }
+        };
+        return raise(historicalUpdate);
+      }
+    },
+
+    raiseDataImportComplete: ({ event }: { event: any }) => {
+      const dataImportComplete: OnboardingEvent = {
+        type: 'DATA_IMPORT_COMPLETE',
+        payload: { itemId: event.output.itemId }
+      };
+      return raise(dataImportComplete);
+    },
+
     logTimeout: () => {
       console.warn('Bank-connection timed out overall.');
     },
@@ -412,26 +449,8 @@ export const onboardingMachine = setup({
                   };
                 },
                 onDone: {
-                  actions: [
-                    assign({
-                      webhookSearchQueue: ({ context, event }) => {
-                        const foundItemId = event.output?.itemId ?? '';
-                        return {
-                          ...context.webhookSearchQueue,
-                          [foundItemId]: {
-                            ...context.webhookSearchQueue[foundItemId],
-                            status: 'found' as const,
-                            foundAt: Date.now()
-                          }
-                        };
-                      }
-                    }),
-                    raise(({ event }) => ({
-                      type: 'HISTORICAL_UPDATE',
-                      payload: { itemId: event.output?.itemId ?? '' }
-                    }))
-                  ],
-                  target: 'checking' // Go back to checking for more webhooks
+                  target: 'checking',
+                  actions: ['handleWebhookSearchResult', 'raiseHistoricalUpdate']
                 },
                 onError: {
                   actions: 'markWebhookSearchFailed',
@@ -478,10 +497,7 @@ export const onboardingMachine = setup({
                   target: 'checkPending',
                   actions: [
                     'removePendingImport',
-                    raise(({ event }) => ({
-                      type: 'DATA_IMPORT_COMPLETE',
-                      payload: { itemId: (event as any).payload.itemId }
-                    })),
+                    'raiseDataImportComplete',
                     ({ event }) => {
                       console.info(
                         '[Data Import] Import completed successfully',
