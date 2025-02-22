@@ -137,21 +137,22 @@ export const onboardingMachine = setup({
     }),
 
     raiseHistoricalUpdate: ({ event }: { event: any }) => {
-      if (event.output) {
-        const historicalUpdate: OnboardingEvent = {
+      if (!event.output) return [];
+      return [
+        {
           type: 'HISTORICAL_UPDATE',
           payload: { itemId: event.output.itemId }
-        };
-        return raise(historicalUpdate);
-      }
+        }
+      ];
     },
 
     raiseDataImportComplete: ({ event }: { event: any }) => {
-      const dataImportComplete: OnboardingEvent = {
-        type: 'DATA_IMPORT_COMPLETE',
-        payload: { itemId: event.output.itemId }
-      };
-      return raise(dataImportComplete);
+      return [
+        {
+          type: 'DATA_IMPORT_COMPLETE',
+          payload: { itemId: event.output.itemId }
+        }
+      ];
     },
 
     logTimeout: () => {
