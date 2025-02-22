@@ -33,6 +33,52 @@ export const onboardingMachine = setup({
   },
 
   actors: {
+    importPlaidData: fromPromise(
+      async ({
+        input
+      }: {
+        input: { itemId: string; context: StateMachineContext };
+      }) => {
+        const { itemId, context } = input;
+        const apiUrl = `${process.env.IMPORT_API_URL}/item`;
+
+        console.info('[Plaid Import] Starting data import', { itemId });
+
+        try {
+          const response = await fetch(apiUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              owner: context.auth0UserProfile.user_id,
+              itemId: itemId,
+              clientId: context.clientId
+            })
+          });
+
+          if (!response.ok) {
+            throw new Error(`Plaid API error: ${response.statusText}`);
+          }
+
+          console.info('[Plaid Import] Successfully imported data', {
+            itemId,
+            status: 'success',
+            timestamp: new Date().toISOString()
+          });
+
+          return { success: true };
+        } catch (error) {
+          console.error('[Plaid Import] Failed to import data', {
+            itemId,
+            error: error instanceof Error ? error.message : String(error),
+            timestamp: new Date().toISOString()
+          });
+          throw error;
+        }
+      }
+    ),
+
     sendOnboardingCompleteEmail: fromPromise(
       async ({ input }: { input: EmailInput }) => {
         await MailGunService.sendEmail(input.email, input.subject, input.body);
@@ -405,32 +451,90 @@ export const onboardingMachine = setup({
             idle: {
               on: {
                 HISTORICAL_UPDATE: {
-                  target: 'active',
-                  actions: 'addPendingImport'
+                  target: 'importing',
+                  actions: assign({
+                    pendingImports: ({ context, event }) => {
+                      if (event.type !== 'HISTORICAL_UPDATE')
+                        return context.pendingImports;
+                      console.info('[Data Import] Starting historical import', {
+                        itemId: event.payload.itemId
+                      });
+                      const newSet = new Set(context.pendingImports);
+                      newSet.add(event.payload.itemId);
+                      return newSet;
+                    }
+                  })
                 }
               }
             },
-            active: {
+            importing: {
+              invoke: {
+                src: 'importPlaidData',
+                input: ({ context, event }) => ({
+                  itemId: (event as any).payload.itemId,
+                  context: context
+                }),
+                onDone: {
+                  target: 'checkPending',
+                  actions: [
+                    'removePendingImport',
+                    raise(({ event }) => ({
+                      type: 'DATA_IMPORT_COMPLETE',
+                      payload: { itemId: (event as any).payload.itemId }
+                    })),
+                    ({ event }) => {
+                      console.info(
+                        '[Data Import] Import completed successfully',
+                        {
+                          itemId: (event as any).payload.itemId
+                        }
+                      );
+                    }
+                  ]
+                },
+                onError: {
+                  target: 'retrying',
+                  actions: [
+                    ({ event }) => {
+                      console.error('[Data Import] Import failed', {
+                        error: event.error,
+                        itemId: (event as any).payload.itemId
+                      });
+                    }
+                  ]
+                }
+              },
               on: {
                 HISTORICAL_UPDATE: {
                   actions: 'addPendingImport'
-                },
-                DATA_IMPORT_COMPLETE: [
-                  {
-                    guard: 'noPendingImports',
-                    target: 'importComplete',
-                    actions: 'removePendingImport'
-                  },
-                  {
-                    actions: 'removePendingImport'
-                  }
-                ],
-                DATA_IMPORT_FAILED: {
-                  actions: 'markImportFailed'
                 }
               }
             },
-            importComplete: { type: 'final' }
+            retrying: {
+              after: {
+                3000: 'importing'
+              },
+              on: {
+                HISTORICAL_UPDATE: {
+                  actions: 'addPendingImport'
+                }
+              }
+            },
+            checkPending: {
+              always: [
+                {
+                  guard: ({ context }) => context.pendingImports.size > 0,
+                  target: 'importing'
+                },
+                {
+                  target: 'importComplete'
+                }
+              ]
+            },
+            importComplete: {
+              type: 'final',
+              entry: () => console.info('[Data Import] All imports completed')
+            }
           }
         },
 
