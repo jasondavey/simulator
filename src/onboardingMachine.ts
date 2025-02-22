@@ -7,6 +7,7 @@ import {
 import { EmailInput } from './types';
 import PlaidWebhookDao from './db/plaidWebhookDao';
 import { Client } from 'fauna';
+import { WorkflowLogger } from './utils/workflowLogger';
 
 type OnboardingEvent =
   // Bank Connection
@@ -26,6 +27,13 @@ type OnboardingEvent =
   | { type: 'SCORING_COMPLETE' }
   | { type: 'SCORING_FAILED' };
 
+// Create logger instance for the workflow
+let workflowLogger: WorkflowLogger;
+
+const logTransition = (state: string, event: any, input?: any, output?: any, error?: any) => {
+  workflowLogger.logStateTransition(state, event.type, input, output, error);
+};
+
 export const onboardingMachine = setup({
   types: {
     context: {} as StateMachineContext,
@@ -42,7 +50,7 @@ export const onboardingMachine = setup({
         const { itemId, context } = input;
         const apiUrl = `${process.env.IMPORT_API_URL}/item`;
 
-        console.info('[Plaid Import] Starting data import', { itemId });
+        logTransition('importPlaidData', { type: 'START_IMPORT' }, { itemId, context });
 
         try {
           const response = await fetch(apiUrl, {
@@ -61,19 +69,11 @@ export const onboardingMachine = setup({
             throw new Error(`Plaid API error: ${response.statusText}`);
           }
 
-          console.info('[Plaid Import] Successfully imported data', {
-            itemId,
-            status: 'success',
-            timestamp: new Date().toISOString()
-          });
-
-          return { success: true, itemId };
+          const result = { success: true, itemId };
+          logTransition('importPlaidData', { type: 'IMPORT_SUCCESS' }, null, result);
+          return result;
         } catch (error) {
-          console.error('[Plaid Import] Failed to import data', {
-            itemId,
-            error: error instanceof Error ? error.message : String(error),
-            timestamp: new Date().toISOString()
-          });
+          logTransition('importPlaidData', { type: 'IMPORT_ERROR' }, null, null, error);
           throw error;
         }
       }
@@ -81,10 +81,19 @@ export const onboardingMachine = setup({
 
     sendOnboardingCompleteEmail: fromPromise(
       async ({ input }: { input: EmailInput }) => {
-        await MailGunService.sendEmail(input.email, input.subject, input.body);
-        return { success: true };
+        logTransition('sendOnboardingCompleteEmail', { type: 'SEND_EMAIL' }, input);
+        try {
+          await MailGunService.sendEmail(input.email, input.subject, input.body);
+          const result = { success: true };
+          logTransition('sendOnboardingCompleteEmail', { type: 'EMAIL_SENT' }, null, result);
+          return result;
+        } catch (error) {
+          logTransition('sendOnboardingCompleteEmail', { type: 'EMAIL_ERROR' }, null, null, error);
+          throw error;
+        }
       }
     ),
+
     searchWebhooksActor: fromPromise(
       async ({
         input
@@ -95,23 +104,31 @@ export const onboardingMachine = setup({
           attempts: number;
         };
       }) => {
-        const webhookData =
-          await PlaidWebhookDao.getWebhookReadyForImportByItemId(
-            input.dbConnection,
-            input.itemId
-          );
-        if (!webhookData) {
-          return null; // No webhook found, continue searching if not onboarded
+        logTransition('searchWebhooks', { type: 'SEARCH_START' }, input);
+        try {
+          const webhookData =
+            await PlaidWebhookDao.getWebhookReadyForImportByItemId(
+              input.dbConnection,
+              input.itemId
+            );
+          
+          if (!webhookData) {
+            logTransition('searchWebhooks', { type: 'NO_WEBHOOK_FOUND' }, null, null);
+            return null;
+          }
+
+          const updatedWebhook = {
+            ...webhookData,
+            resolved_at: new Date().toISOString()
+          };
+          await PlaidWebhookDao.upsertWebhook(input.dbConnection, updatedWebhook);
+
+          logTransition('searchWebhooks', { type: 'WEBHOOK_FOUND' }, null, webhookData);
+          return webhookData;
+        } catch (error) {
+          logTransition('searchWebhooks', { type: 'SEARCH_ERROR' }, null, null, error);
+          throw error;
         }
-
-        // Mark the webhook as processed to prevent reuse
-        const updatedWebhook = {
-          ...webhookData,
-          resolved_at: new Date().toISOString()
-        };
-        await PlaidWebhookDao.upsertWebhook(input.dbConnection, updatedWebhook);
-
-        return webhookData;
       }
     )
   },
@@ -120,12 +137,12 @@ export const onboardingMachine = setup({
     handleWebhookSearchResult: assign({
       webhookSearchQueue: ({ context, event }: { context: StateMachineContext; event: any }) => {
         if (!event.output) {
-          console.info('[Webhook Search] No webhook found for item, continuing search');
+          logTransition('webhookSearch', { type: 'NO_WEBHOOK' }, context.webhookSearchQueue);
           return context.webhookSearchQueue;
         }
 
         const foundItemId = event.output.itemId;
-        return {
+        const result = {
           ...context.webhookSearchQueue,
           [foundItemId]: {
             ...context.webhookSearchQueue[foundItemId],
@@ -133,57 +150,50 @@ export const onboardingMachine = setup({
             foundAt: Date.now()
           }
         };
+        logTransition('webhookSearch', { type: 'WEBHOOK_FOUND' }, null, result);
+        return result;
       }
     }),
 
     raiseHistoricalUpdate: ({ event }: { event: any }) => {
       if (!event.output) return [];
-      return [
-        {
-          type: 'HISTORICAL_UPDATE',
-          payload: { itemId: event.output.itemId }
-        }
-      ];
+      const action = [{
+        type: 'HISTORICAL_UPDATE',
+        payload: { itemId: event.output.itemId }
+      }];
+      logTransition('historicalUpdate', { type: 'RAISE' }, null, action);
+      return action;
     },
 
     raiseDataImportComplete: ({ event }: { event: any }) => {
-      return [
-        {
-          type: 'DATA_IMPORT_COMPLETE',
-          payload: { itemId: event.output.itemId }
-        }
-      ];
+      const action = [{
+        type: 'DATA_IMPORT_COMPLETE',
+        payload: { itemId: event.output.itemId }
+      }];
+      logTransition('dataImport', { type: 'COMPLETE' }, null, action);
+      return action;
     },
 
     logTimeout: () => {
-      console.warn('Bank-connection timed out overall.');
+      logTransition('bankConnection', { type: 'TIMEOUT' });
     },
 
     addBankSuccess: assign({
       bankConnectionSuccesses: ({ context, event }) => {
-        console.log('Event type:', event.type);
-        console.log(
-          'Current bankConnectionSuccesses:',
-          context.bankConnectionSuccesses
-        );
-
         if (event.type === 'BANK_CONNECTED') {
-          console.log('Event itemId:', event.itemId);
-          console.log('Bank connected:', event.itemId);
           const newSuccesses = [
             ...context.bankConnectionSuccesses,
             event.itemId
           ];
-          console.log('New bankConnectionSuccesses:', newSuccesses);
+          logTransition('bankConnection', event, null, { successes: newSuccesses });
           return newSuccesses;
         }
-
         return context.bankConnectionSuccesses;
       },
       webhookSearchQueue: ({ context, event }) => {
         if (event.type !== 'BANK_CONNECTED') return context.webhookSearchQueue;
 
-        return {
+        const result = {
           ...context.webhookSearchQueue,
           [event.itemId]: {
             status: 'pending' as const,
@@ -191,6 +201,8 @@ export const onboardingMachine = setup({
             lastAttempt: Date.now()
           }
         };
+        logTransition('webhookSearch', { type: 'QUEUE_UPDATE' }, null, result);
+        return result;
       }
     }),
 
@@ -198,11 +210,12 @@ export const onboardingMachine = setup({
       bankConnectionFailures: ({ context, event }) => {
         if (event.type !== 'BANK_CONNECTION_FAILED')
           return context.bankConnectionFailures;
-        return [...context.bankConnectionFailures, event.itemId];
+        const result = [...context.bankConnectionFailures, event.itemId];
+        logTransition('bankConnection', event, null, { failures: result });
+        return result;
       }
     }),
 
-    // B) Webhook Search
     pollForWebhooks: assign({
       webhookSearchQueue: ({ context }) => {
         const updatedQueue = { ...context.webhookSearchQueue };
@@ -215,6 +228,7 @@ export const onboardingMachine = setup({
             };
           }
         });
+        logTransition('webhookSearch', { type: 'POLL' }, null, updatedQueue);
         return updatedQueue;
       }
     }),
@@ -223,7 +237,7 @@ export const onboardingMachine = setup({
       webhookSearchQueue: ({ context, event }) => {
         if (event.type !== 'HISTORICAL_UPDATE')
           return context.webhookSearchQueue;
-        return {
+        const result = {
           ...context.webhookSearchQueue,
           [event.payload.itemId]: {
             ...context.webhookSearchQueue[event.payload.itemId],
@@ -231,6 +245,8 @@ export const onboardingMachine = setup({
             foundAt: Date.now()
           }
         };
+        logTransition('webhookSearch', { type: 'MARK_FOUND' }, null, result);
+        return result;
       }
     }),
 
@@ -238,7 +254,7 @@ export const onboardingMachine = setup({
       webhookSearchQueue: ({ context, event }) => {
         if (event.type !== 'WEBHOOK_SEARCH_FAILED')
           return context.webhookSearchQueue;
-        return {
+        const result = {
           ...context.webhookSearchQueue,
           [event.itemId]: {
             ...context.webhookSearchQueue[event.itemId],
@@ -246,6 +262,8 @@ export const onboardingMachine = setup({
             lastAttempt: Date.now()
           }
         };
+        logTransition('webhookSearch', { type: 'MARK_FAILED' }, null, result);
+        return result;
       }
     }),
 
@@ -254,6 +272,7 @@ export const onboardingMachine = setup({
         if (event.type !== 'HISTORICAL_UPDATE') return context.pendingImports;
         const newSet = new Set(context.pendingImports);
         newSet.add(event.payload.itemId);
+        logTransition('dataImport', { type: 'ADD_PENDING' }, null, Array.from(newSet));
         return newSet;
       },
       webhookSearchQueue: ({ context, event }) => {
@@ -264,16 +283,18 @@ export const onboardingMachine = setup({
         return rest;
       }
     }),
-    // C) Data Import
+
     removePendingImport: assign({
       pendingImports: ({ context, event }) => {
         if (event.type !== 'DATA_IMPORT_COMPLETE')
           return context.pendingImports;
         const newSet = new Set(context.pendingImports);
         newSet.delete(event.payload.itemId);
+        logTransition('dataImport', { type: 'REMOVE_PENDING' }, null, Array.from(newSet));
         return newSet;
       }
     }),
+
     markImportFailed: assign({
       pendingImports: ({ context, event }) => {
         if (event.type !== 'DATA_IMPORT_FAILED') return context.pendingImports;
@@ -284,37 +305,35 @@ export const onboardingMachine = setup({
       dataImportFailures: ({ context, event }) => {
         if (event.type !== 'DATA_IMPORT_FAILED')
           return context.dataImportFailures;
-        return [...context.dataImportFailures, event.payload.itemId];
+        const result = [...context.dataImportFailures, event.payload.itemId];
+        logTransition('dataImport', { type: 'MARK_FAILED' }, null, { failures: result });
+        return result;
       }
     }),
 
-    // D) Scoring
     markScoringFailed: assign({
       scoringFailures: ({ context, event }) => {
         if (event.type !== 'SCORING_FAILED') return context.scoringFailures;
-        return [...context.scoringFailures, 'scoringFailed'];
+        const result = [...context.scoringFailures, 'scoringFailed'];
+        logTransition('scoring', { type: 'MARK_FAILED' }, null, { failures: result });
+        return result;
       }
     }),
 
-    // E) Final summary
     logSummary: ({ context }) => {
-      console.log('=== Final Summary ===');
-      console.log('Client ID:', context.clientId);
-      console.log('Member ID:', context.memberId);
-      console.log('Onboarded:', context.onboarded);
-      console.log(
-        'Bank Connection Successes:',
-        context.bankConnectionSuccesses
-      );
-      console.log('Bank Connection Failures:', context.bankConnectionFailures);
-      console.log(
-        'Webhook Search Failures:',
-        Object.entries(context.webhookSearchQueue)
+      const summary = {
+        clientId: context.clientId,
+        memberId: context.memberId,
+        onboarded: context.onboarded,
+        bankConnectionSuccesses: context.bankConnectionSuccesses,
+        bankConnectionFailures: context.bankConnectionFailures,
+        webhookSearchFailures: Object.entries(context.webhookSearchQueue)
           .filter(([_, entry]) => entry.status === 'failed')
-          .map(([itemId]) => itemId)
-      );
-      console.log('Data Import Failures:', context.dataImportFailures);
-      console.log('Scoring Failures:', context.scoringFailures);
+          .map(([itemId]) => itemId),
+        dataImportFailures: context.dataImportFailures,
+        scoringFailures: context.scoringFailures
+      };
+      logTransition('finalSummary', { type: 'COMPLETE' }, null, summary);
     }
   },
 
@@ -324,26 +343,24 @@ export const onboardingMachine = setup({
 }).createMachine({
   id: 'onboardingMachine',
   initial: 'onboarding',
-  context: ({ input }) => ({
-    ...createInitialContext(),
-    ...(input as StateMachineContext) // Merge input context
-  }),
+  context: ({ input }) => {
+    const context = {
+      ...createInitialContext(),
+      ...(input as StateMachineContext)
+    };
+    workflowLogger = new WorkflowLogger(context.clientId);
+    return context;
+  },
   states: {
-    //////////////////////////////////////////
-    // 1) The parent "onboarding" state
-    //////////////////////////////////////////
     onboarding: {
       type: 'parallel',
       onDone: 'finalSummary',
-
       states: {
-        ////////////////////////////////
-        // (A) Bank Connection
-        ////////////////////////////////
         bankConnection: {
           initial: 'connecting',
           states: {
             connecting: {
+              entry: () => logTransition('bankConnection', { type: 'ENTER_CONNECTING' }),
               after: {
                 600000: [
                   {
@@ -371,6 +388,7 @@ export const onboardingMachine = setup({
               }
             },
             sendOnboardingCompleteEmail: {
+              entry: () => logTransition('bankConnection', { type: 'ENTER_SEND_EMAIL' }),
               invoke: {
                 id: 'sendOnboardingCompleteEmail',
                 src: 'sendOnboardingCompleteEmail',
@@ -393,22 +411,28 @@ export const onboardingMachine = setup({
                 }
               }
             },
-            timedOut: { type: 'final' },
-            doneConnecting: { type: 'final' },
-            failure: { type: 'final' }
+            timedOut: { 
+              type: 'final',
+              entry: () => logTransition('bankConnection', { type: 'TIMED_OUT' })
+            },
+            doneConnecting: { 
+              type: 'final',
+              entry: () => logTransition('bankConnection', { type: 'DONE' })
+            },
+            failure: { 
+              type: 'final',
+              entry: () => logTransition('bankConnection', { type: 'FAILED' })
+            }
           }
         },
 
-        ////////////////////////////////
-        // (B) Webhook Search
-        ////////////////////////////////
         webhookSearch: {
           initial: 'checking',
           states: {
             checking: {
+              entry: () => logTransition('webhookSearch', { type: 'ENTER_CHECKING' }),
               always: [
                 {
-                  // If there are pending webhooks, go to searching
                   guard: ({ context }) =>
                     Object.values(context.webhookSearchQueue).some(
                       (entry) => entry.status === 'pending'
@@ -416,17 +440,18 @@ export const onboardingMachine = setup({
                   target: 'searching'
                 },
                 {
-                  // If no pending webhooks, go to idle
                   target: 'idle'
                 }
               ]
             },
             idle: {
+              entry: () => logTransition('webhookSearch', { type: 'ENTER_IDLE' }),
               after: {
-                2000: 'checking' // Check again after delay
+                2000: 'checking'
               }
             },
             searching: {
+              entry: () => logTransition('webhookSearch', { type: 'ENTER_SEARCHING' }),
               invoke: {
                 src: 'searchWebhooksActor',
                 input: ({ context }) => {
@@ -455,20 +480,18 @@ export const onboardingMachine = setup({
                 },
                 onError: {
                   actions: 'markWebhookSearchFailed',
-                  target: 'checking' // Check again even after error
+                  target: 'checking'
                 }
               }
             }
           }
         },
 
-        ////////////////////////////////
-        // (C) Data Import
-        ////////////////////////////////
         dataImport: {
           initial: 'idle',
           states: {
             idle: {
+              entry: () => logTransition('dataImport', { type: 'ENTER_IDLE' }),
               on: {
                 HISTORICAL_UPDATE: {
                   target: 'importing',
@@ -476,11 +499,9 @@ export const onboardingMachine = setup({
                     pendingImports: ({ context, event }) => {
                       if (event.type !== 'HISTORICAL_UPDATE')
                         return context.pendingImports;
-                      console.info('[Data Import] Starting historical import', {
-                        itemId: event.payload.itemId
-                      });
                       const newSet = new Set(context.pendingImports);
                       newSet.add(event.payload.itemId);
+                      logTransition('dataImport', { type: 'START_IMPORT' }, { itemId: event.payload.itemId });
                       return newSet;
                     }
                   })
@@ -488,6 +509,7 @@ export const onboardingMachine = setup({
               }
             },
             importing: {
+              entry: () => logTransition('dataImport', { type: 'ENTER_IMPORTING' }),
               invoke: {
                 src: 'importPlaidData',
                 input: ({ context, event }) => ({
@@ -500,12 +522,7 @@ export const onboardingMachine = setup({
                     'removePendingImport',
                     'raiseDataImportComplete',
                     ({ event }) => {
-                      console.info(
-                        '[Data Import] Import completed successfully',
-                        {
-                          itemId: (event as any).payload.itemId
-                        }
-                      );
+                      logTransition('dataImport', { type: 'IMPORT_SUCCESS' }, null, { itemId: (event as any).payload.itemId });
                     }
                   ]
                 },
@@ -513,10 +530,7 @@ export const onboardingMachine = setup({
                   target: 'retrying',
                   actions: [
                     ({ event }) => {
-                      console.error('[Data Import] Import failed', {
-                        error: event.error,
-                        itemId: (event as any).payload.itemId
-                      });
+                      logTransition('dataImport', { type: 'IMPORT_ERROR' }, null, null, event.error);
                     }
                   ]
                 }
@@ -528,6 +542,7 @@ export const onboardingMachine = setup({
               }
             },
             retrying: {
+              entry: () => logTransition('dataImport', { type: 'ENTER_RETRYING' }),
               after: {
                 3000: 'importing'
               },
@@ -538,6 +553,7 @@ export const onboardingMachine = setup({
               }
             },
             checkPending: {
+              entry: () => logTransition('dataImport', { type: 'ENTER_CHECK_PENDING' }),
               always: [
                 {
                   guard: ({ context }) => context.pendingImports.size > 0,
@@ -550,36 +566,42 @@ export const onboardingMachine = setup({
             },
             importComplete: {
               type: 'final',
-              entry: () => console.info('[Data Import] All imports completed')
+              entry: () => logTransition('dataImport', { type: 'COMPLETE' })
             }
           }
         },
 
-        ////////////////////////////////
-        // (D) Scoring
-        ////////////////////////////////
         scoring: {
           initial: 'idle',
           states: {
-            idle: {},
+            idle: {
+              entry: () => logTransition('scoring', { type: 'ENTER_IDLE' })
+            },
             scoring: {
+              entry: () => logTransition('scoring', { type: 'ENTER_SCORING' }),
               on: {
-                SCORING_COMPLETE: 'doneScoring',
-                SCORING_FAILED: { actions: 'markScoringFailed' }
+                SCORING_COMPLETE: {
+                  target: 'doneScoring',
+                  actions: () => logTransition('scoring', { type: 'COMPLETE' })
+                },
+                SCORING_FAILED: { 
+                  actions: ['markScoringFailed', () => logTransition('scoring', { type: 'FAILED' })]
+                }
               }
             },
-            doneScoring: { type: 'final' }
+            doneScoring: { 
+              type: 'final',
+              entry: () => logTransition('scoring', { type: 'DONE' })
+            }
           }
         }
       },
 
-      // Automatically start scoring once dataImport => importComplete
-      // and scoring => 'idle'
       on: {
         DATA_IMPORT_COMPLETE: [
           {
             guard: 'noPendingImports',
-            actions: 'removePendingImport',
+            actions: ['removePendingImport', () => logTransition('workflow', { type: 'START_SCORING' })],
             target: '.scoring.scoring'
           }
         ],
@@ -589,9 +611,6 @@ export const onboardingMachine = setup({
       }
     },
 
-    //////////////////////////////////////////
-    // 2) Final summary after "onboarding"
-    //////////////////////////////////////////
     finalSummary: {
       type: 'final',
       entry: 'logSummary'
