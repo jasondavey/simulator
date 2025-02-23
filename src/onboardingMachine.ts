@@ -94,7 +94,7 @@ export const onboardingMachine = setup({
       }
     ),
 
-    searchWebhooksActor: fromPromise(
+    webhookSearchActor: fromPromise(
       async ({
         input
       }: {
@@ -104,7 +104,7 @@ export const onboardingMachine = setup({
           attempts: number;
         };
       }) => {
-        logTransition('searchWebhooks', { type: 'SEARCH_START' }, input);
+        logTransition('webhookSearch', { type: 'SEARCH_START' }, input);
         try {
           const webhookData =
             await PlaidWebhookDao.getWebhookReadyForImportByItemId(
@@ -113,7 +113,7 @@ export const onboardingMachine = setup({
             );
           
           if (!webhookData) {
-            logTransition('searchWebhooks', { type: 'NO_WEBHOOK_FOUND' }, null, null);
+            logTransition('webhookSearch', { type: 'NO_WEBHOOK_FOUND' }, null, null);
             return null;
           }
 
@@ -123,10 +123,10 @@ export const onboardingMachine = setup({
           };
           await PlaidWebhookDao.upsertWebhook(input.dbConnection, updatedWebhook);
 
-          logTransition('searchWebhooks', { type: 'WEBHOOK_FOUND' }, null, webhookData);
+          logTransition('webhookSearch', { type: 'WEBHOOK_FOUND' }, null, webhookData);
           return webhookData;
         } catch (error) {
-          logTransition('searchWebhooks', { type: 'SEARCH_ERROR' }, null, null, error);
+          logTransition('webhookSearch', { type: 'SEARCH_ERROR' }, null, null, error);
           throw error;
         }
       }
@@ -161,7 +161,7 @@ export const onboardingMachine = setup({
         type: 'HISTORICAL_UPDATE',
         payload: { itemId: event.output.itemId }
       }];
-      logTransition('historicalUpdate', { type: 'RAISE' }, null, action);
+      logTransition('webhookSearch', { type: 'RAISE_HISTORICAL_UPDATE' }, null, action);
       return action;
     },
 
@@ -453,7 +453,7 @@ export const onboardingMachine = setup({
             searching: {
               entry: () => logTransition('webhookSearch', { type: 'ENTER_SEARCHING' }),
               invoke: {
-                src: 'searchWebhooksActor',
+                src: 'webhookSearchActor',
                 input: ({ context }) => {
                   const pendingItem = Object.entries(
                     context.webhookSearchQueue
