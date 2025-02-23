@@ -9,6 +9,7 @@ interface LogEntry {
   output?: any;
   error?: any;
   duration?: number;
+  details?: string; // Added for more descriptive logging
 }
 
 export class WorkflowLogger {
@@ -33,6 +34,21 @@ export class WorkflowLogger {
   }
 
   logStateTransition(state: string, event: string, input?: any, output?: any, error?: any) {
+    let details = '';
+
+    // Enhanced logging for specific states
+    if (state === 'bankConnection' && output?.successes) {
+      details = `Bank connections successful: ${JSON.stringify(output.successes)}`;
+    }
+    
+    if (state === 'webhookSearch') {
+      if (output?.queue) {
+        details = `Webhook queue state: ${JSON.stringify(output.queue, null, 2)}`;
+      } else if (output?.status === 'found') {
+        details = `Webhook found for item: ${output.itemId}`;
+      }
+    }
+
     const entry: LogEntry = {
       timestamp: new Date().toISOString(),
       state,
@@ -40,7 +56,8 @@ export class WorkflowLogger {
       input: this.sanitizeData(input),
       output: this.sanitizeData(output),
       error: error ? this.sanitizeError(error) : undefined,
-      duration: Date.now() - this.startTime
+      duration: Date.now() - this.startTime,
+      details: details || undefined
     };
     
     this.logEntries.push(entry);
@@ -83,32 +100,36 @@ export class WorkflowLogger {
   }
 
   private writeReport() {
-    let report = `# Onboarding Workflow Diagnostic Report\n\n`;
+    let report = `\n# Onboarding Workflow Diagnostic Report\n\n`;
     report += `Generated: ${new Date().toISOString()}\n\n`;
     
-    report += `## Summary\n`;
+    report += `\n## Summary\n\n`;
     report += `- Total Duration: ${this.formatDuration(Date.now() - this.startTime)}\n`;
     report += `- Total Steps: ${this.logEntries.length}\n`;
     report += `- Errors: ${this.logEntries.filter(e => e.error).length}\n\n`;
     
-    report += `## Detailed Flow\n\n`;
+    report += `\n## Detailed Flow\n\n`;
     
     this.logEntries.forEach((entry, index) => {
-      report += `### Step ${index + 1}: ${entry.state}\n`;
+      report += `\n### Step ${index + 1}: ${entry.state}\n\n`;
       report += `- Timestamp: ${entry.timestamp}\n`;
       report += `- Event: ${entry.event}\n`;
       report += `- Duration: ${this.formatDuration(entry.duration || 0)}\n`;
       
+      if (entry.details) {
+        report += `- Details: ${entry.details}\n`;
+      }
+      
       if (entry.input) {
-        report += `\n**Input:**\n\`\`\`json\n${JSON.stringify(entry.input, null, 2)}\n\`\`\`\n`;
+        report += `\n**Input:**\n\n\`\`\`json\n${JSON.stringify(entry.input, null, 2)}\n\`\`\`\n`;
       }
       
       if (entry.output) {
-        report += `\n**Output:**\n\`\`\`json\n${JSON.stringify(entry.output, null, 2)}\n\`\`\`\n`;
+        report += `\n**Output:**\n\n\`\`\`json\n${JSON.stringify(entry.output, null, 2)}\n\`\`\`\n`;
       }
       
       if (entry.error) {
-        report += `\n**Error:**\n\`\`\`\n${JSON.stringify(entry.error, null, 2)}\n\`\`\`\n`;
+        report += `\n**Error:**\n\n\`\`\`\n${JSON.stringify(entry.error, null, 2)}\n\`\`\`\n`;
       }
       
       report += `\n---\n\n`;

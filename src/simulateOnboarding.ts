@@ -70,7 +70,10 @@ const simulateFiveBanksParallel = async () => {
       onboardingActor.getSnapshot().value
     );
 
-    onboardingActor.send({ type: 'BANK_CONNECTED', itemId: pipelineContext.bankConnectionId });
+    onboardingActor.send({
+      type: 'BANK_CONNECTED',
+      itemId: pipelineContext.bankConnectionId
+    });
 
     // Check immediate state after event
     const immediateSnapshot = onboardingActor.getSnapshot();
@@ -84,17 +87,17 @@ const simulateFiveBanksParallel = async () => {
   }, 2000);
 
   // Second timeout - Verify State
-  setTimeout(() => {
-    console.log('\n=== Verifying Final State ===');
-    logState('Final State Check');
-  }, 3000);
+  // setTimeout(() => {
+  //   console.log('\n=== Verifying Final State ===');
+  //   logState('Final State Check');
+  // }, 3000);
 
   // Third timeout - User Finish
-  setTimeout(() => {
-    console.log('\n=== User Finishing ===');
-    onboardingActor.send({ type: 'USER_CLICK_FINISH' });
-    logState('After User Finish');
-  }, 4000);
+  // setTimeout(() => {
+  //   console.log('\n=== User Finishing ===');
+  //   onboardingActor.send({ type: 'USER_CLICK_FINISH' });
+  //   logState('After User Finish');
+  // }, 4000);
 };
 
 simulateFiveBanksParallel();
