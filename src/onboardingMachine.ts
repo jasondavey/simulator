@@ -10,9 +10,18 @@ import { Client } from 'fauna';
 import { WorkflowLogger } from './utils/workflowLogger';
 
 const TIMEOUTS = {
-  BANK_CONNECTION: parseInt(process.env.BANK_CONNECTION_TIMEOUT_MS || '600000', 10),      // 10 minutes
-  WEBHOOK_CHECK_INTERVAL: parseInt(process.env.WEBHOOK_CHECK_INTERVAL_MS || '2000', 10),  // 2 seconds
-  DATA_IMPORT_RETRY_DELAY: parseInt(process.env.DATA_IMPORT_RETRY_DELAY_MS || '3000', 10) // 3 seconds
+  BANK_CONNECTION: parseInt(
+    process.env.BANK_CONNECTION_TIMEOUT_MS || '600000',
+    10
+  ), // 10 minutes
+  WEBHOOK_CHECK_INTERVAL: parseInt(
+    process.env.WEBHOOK_CHECK_INTERVAL_MS || '2000',
+    10
+  ), // 2 seconds
+  DATA_IMPORT_RETRY_DELAY: parseInt(
+    process.env.DATA_IMPORT_RETRY_DELAY_MS || '3000',
+    10
+  ) // 3 seconds
 } as const;
 
 type OnboardingEvent =
@@ -36,7 +45,13 @@ type OnboardingEvent =
 // Create logger instance for the workflow
 let workflowLogger: WorkflowLogger;
 
-const logTransition = (state: string, event: any, input?: any, output?: any, error?: any) => {
+const logTransition = (
+  state: string,
+  event: any,
+  input?: any,
+  output?: any,
+  error?: any
+) => {
   workflowLogger.logStateTransition(state, event.type, input, output, error);
 };
 
@@ -56,7 +71,11 @@ export const onboardingMachine = setup({
         const { itemId, context } = input;
         const apiUrl = `${process.env.IMPORT_API_URL}/item`;
 
-        logTransition('importPlaidData', { type: 'START_IMPORT' }, { itemId, context });
+        logTransition(
+          'importPlaidData',
+          { type: 'START_IMPORT' },
+          { itemId, context }
+        );
 
         try {
           const response = await fetch(apiUrl, {
@@ -76,10 +95,21 @@ export const onboardingMachine = setup({
           }
 
           const result = { success: true, itemId };
-          logTransition('importPlaidData', { type: 'IMPORT_SUCCESS' }, null, result);
+          logTransition(
+            'importPlaidData',
+            { type: 'IMPORT_SUCCESS' },
+            null,
+            result
+          );
           return result;
         } catch (error) {
-          logTransition('importPlaidData', { type: 'IMPORT_ERROR' }, null, null, error);
+          logTransition(
+            'importPlaidData',
+            { type: 'IMPORT_ERROR' },
+            null,
+            null,
+            error
+          );
           throw error;
         }
       }
@@ -87,14 +117,33 @@ export const onboardingMachine = setup({
 
     sendOnboardingCompleteEmail: fromPromise(
       async ({ input }: { input: EmailInput }) => {
-        logTransition('sendOnboardingCompleteEmail', { type: 'SEND_EMAIL' }, input);
+        logTransition(
+          'sendOnboardingCompleteEmail',
+          { type: 'SEND_EMAIL' },
+          input
+        );
         try {
-          await MailGunService.sendEmail(input.email, input.subject, input.body);
+          await MailGunService.sendEmail(
+            input.email,
+            input.subject,
+            input.body
+          );
           const result = { success: true };
-          logTransition('sendOnboardingCompleteEmail', { type: 'EMAIL_SENT' }, null, result);
+          logTransition(
+            'sendOnboardingCompleteEmail',
+            { type: 'EMAIL_SENT' },
+            null,
+            result
+          );
           return result;
         } catch (error) {
-          logTransition('sendOnboardingCompleteEmail', { type: 'EMAIL_ERROR' }, null, null, error);
+          logTransition(
+            'sendOnboardingCompleteEmail',
+            { type: 'EMAIL_ERROR' },
+            null,
+            null,
+            error
+          );
           throw error;
         }
       }
@@ -117,9 +166,12 @@ export const onboardingMachine = setup({
               input.dbConnection,
               input.itemId
             );
-          
+
           if (!webhookData) {
-            logTransition('webhookSearch', { type: 'NO_WEBHOOK_FOUND' }, null, { itemId: input.itemId, attempts: input.attempts });
+            logTransition('webhookSearch', { type: 'NO_WEBHOOK_FOUND' }, null, {
+              itemId: input.itemId,
+              attempts: input.attempts
+            });
             return null;
           }
 
@@ -127,7 +179,10 @@ export const onboardingMachine = setup({
             ...webhookData,
             resolved_at: new Date().toISOString()
           };
-          await PlaidWebhookDao.upsertWebhook(input.dbConnection, updatedWebhook);
+          await PlaidWebhookDao.upsertWebhook(
+            input.dbConnection,
+            updatedWebhook
+          );
 
           logTransition('webhookSearch', { type: 'WEBHOOK_FOUND' }, null, {
             itemId: input.itemId,
@@ -136,7 +191,13 @@ export const onboardingMachine = setup({
           });
           return webhookData;
         } catch (error) {
-          logTransition('webhookSearch', { type: 'SEARCH_ERROR' }, null, null, error);
+          logTransition(
+            'webhookSearch',
+            { type: 'SEARCH_ERROR' },
+            null,
+            null,
+            error
+          );
           throw error;
         }
       }
@@ -145,7 +206,13 @@ export const onboardingMachine = setup({
 
   actions: {
     handleWebhookSearchResult: assign({
-      webhookSearchQueue: ({ context, event }: { context: StateMachineContext; event: any }) => {
+      webhookSearchQueue: ({
+        context,
+        event
+      }: {
+        context: StateMachineContext;
+        event: any;
+      }) => {
         if (!event.output) {
           logTransition('webhookSearch', { type: 'NO_WEBHOOK' }, null, {
             message: 'No webhook found in search result',
@@ -154,7 +221,7 @@ export const onboardingMachine = setup({
           return context.webhookSearchQueue;
         }
 
-        const foundItemId = event.output.itemId;
+        const foundItemId = event.output.sourceWebhook.item_id;
         const result = {
           ...context.webhookSearchQueue,
           [foundItemId]: {
@@ -173,22 +240,31 @@ export const onboardingMachine = setup({
 
     raiseHistoricalUpdate: ({ event }: { event: any }) => {
       if (!event.output) return [];
-      const action = [{
-        type: 'HISTORICAL_UPDATE',
-        payload: { itemId: event.output.itemId }
-      }];
-      logTransition('webhookSearch', { type: 'RAISE_HISTORICAL_UPDATE' }, null, {
-        message: `Raising historical update for item: ${event.output.itemId}`,
-        action
-      });
+      const action = [
+        {
+          type: 'HISTORICAL_UPDATE',
+          payload: { itemId: event.output.itemId }
+        }
+      ];
+      logTransition(
+        'webhookSearch',
+        { type: 'RAISE_HISTORICAL_UPDATE' },
+        null,
+        {
+          message: `Raising historical update for item: ${event.output.itemId}`,
+          action
+        }
+      );
       return action;
     },
 
     raiseDataImportComplete: ({ event }: { event: any }) => {
-      const action = [{
-        type: 'DATA_IMPORT_COMPLETE',
-        payload: { itemId: event.output.itemId }
-      }];
+      const action = [
+        {
+          type: 'DATA_IMPORT_COMPLETE',
+          payload: { itemId: event.output.itemId }
+        }
+      ];
       logTransition('dataImport', { type: 'COMPLETE' }, null, {
         message: `Data import complete for item: ${event.output.itemId}`,
         action
@@ -421,7 +497,8 @@ export const onboardingMachine = setup({
           initial: 'connecting',
           states: {
             connecting: {
-              entry: () => logTransition('bankConnection', { type: 'ENTER_CONNECTING' }),
+              entry: () =>
+                logTransition('bankConnection', { type: 'ENTER_CONNECTING' }),
               after: {
                 [TIMEOUTS.BANK_CONNECTION]: [
                   {
@@ -449,7 +526,8 @@ export const onboardingMachine = setup({
               }
             },
             sendOnboardingCompleteEmail: {
-              entry: () => logTransition('bankConnection', { type: 'ENTER_SEND_EMAIL' }),
+              entry: () =>
+                logTransition('bankConnection', { type: 'ENTER_SEND_EMAIL' }),
               invoke: {
                 id: 'sendOnboardingCompleteEmail',
                 src: 'sendOnboardingCompleteEmail',
@@ -472,15 +550,16 @@ export const onboardingMachine = setup({
                 }
               }
             },
-            timedOut: { 
+            timedOut: {
               type: 'final',
-              entry: () => logTransition('bankConnection', { type: 'TIMED_OUT' })
+              entry: () =>
+                logTransition('bankConnection', { type: 'TIMED_OUT' })
             },
-            doneConnecting: { 
+            doneConnecting: {
               type: 'final',
               entry: () => logTransition('bankConnection', { type: 'DONE' })
             },
-            failure: { 
+            failure: {
               type: 'final',
               entry: () => logTransition('bankConnection', { type: 'FAILED' })
             }
@@ -491,7 +570,8 @@ export const onboardingMachine = setup({
           initial: 'checking',
           states: {
             checking: {
-              entry: () => logTransition('webhookSearch', { type: 'ENTER_CHECKING' }),
+              entry: () =>
+                logTransition('webhookSearch', { type: 'ENTER_CHECKING' }),
               always: [
                 {
                   guard: ({ context }) =>
@@ -506,13 +586,15 @@ export const onboardingMachine = setup({
               ]
             },
             idle: {
-              entry: () => logTransition('webhookSearch', { type: 'ENTER_IDLE' }),
+              entry: () =>
+                logTransition('webhookSearch', { type: 'ENTER_IDLE' }),
               after: {
                 [TIMEOUTS.WEBHOOK_CHECK_INTERVAL]: 'checking'
               }
             },
             searching: {
-              entry: () => logTransition('webhookSearch', { type: 'ENTER_SEARCHING' }),
+              entry: () =>
+                logTransition('webhookSearch', { type: 'ENTER_SEARCHING' }),
               invoke: {
                 src: 'webhookSearchActor',
                 input: ({ context }) => {
@@ -537,7 +619,10 @@ export const onboardingMachine = setup({
                 },
                 onDone: {
                   target: 'checking',
-                  actions: ['handleWebhookSearchResult', 'raiseHistoricalUpdate']
+                  actions: [
+                    'handleWebhookSearchResult',
+                    'raiseHistoricalUpdate'
+                  ]
                 },
                 onError: {
                   actions: 'markWebhookSearchFailed',
@@ -562,10 +647,14 @@ export const onboardingMachine = setup({
                         return context.pendingImports;
                       const newSet = new Set(context.pendingImports);
                       newSet.add(event.payload.itemId);
-                      logTransition('dataImport', { type: 'START_IMPORT' }, {
-                        message: `Starting import for item: ${event.payload.itemId}`,
-                        itemId: event.payload.itemId
-                      });
+                      logTransition(
+                        'dataImport',
+                        { type: 'START_IMPORT' },
+                        {
+                          message: `Starting import for item: ${event.payload.itemId}`,
+                          itemId: event.payload.itemId
+                        }
+                      );
                       return newSet;
                     }
                   })
@@ -573,7 +662,8 @@ export const onboardingMachine = setup({
               }
             },
             importing: {
-              entry: () => logTransition('dataImport', { type: 'ENTER_IMPORTING' }),
+              entry: () =>
+                logTransition('dataImport', { type: 'ENTER_IMPORTING' }),
               invoke: {
                 src: 'importPlaidData',
                 input: ({ context, event }) => ({
@@ -586,10 +676,15 @@ export const onboardingMachine = setup({
                     'removePendingImport',
                     'raiseDataImportComplete',
                     ({ event }) => {
-                      logTransition('dataImport', { type: 'IMPORT_SUCCESS' }, null, {
-                        message: `Import successful for item: ${(event as any).payload.itemId}`,
-                        itemId: (event as any).payload.itemId
-                      });
+                      logTransition(
+                        'dataImport',
+                        { type: 'IMPORT_SUCCESS' },
+                        null,
+                        {
+                          message: `Import successful for item: ${(event as any).payload.itemId}`,
+                          itemId: (event as any).payload.itemId
+                        }
+                      );
                     }
                   ]
                 },
@@ -597,7 +692,13 @@ export const onboardingMachine = setup({
                   target: 'retrying',
                   actions: [
                     ({ event }) => {
-                      logTransition('dataImport', { type: 'IMPORT_ERROR' }, null, null, event.error);
+                      logTransition(
+                        'dataImport',
+                        { type: 'IMPORT_ERROR' },
+                        null,
+                        null,
+                        event.error
+                      );
                     }
                   ]
                 }
@@ -609,7 +710,8 @@ export const onboardingMachine = setup({
               }
             },
             retrying: {
-              entry: () => logTransition('dataImport', { type: 'ENTER_RETRYING' }),
+              entry: () =>
+                logTransition('dataImport', { type: 'ENTER_RETRYING' }),
               after: {
                 [TIMEOUTS.DATA_IMPORT_RETRY_DELAY]: 'importing'
               },
@@ -620,7 +722,8 @@ export const onboardingMachine = setup({
               }
             },
             checkPending: {
-              entry: () => logTransition('dataImport', { type: 'ENTER_CHECK_PENDING' }),
+              entry: () =>
+                logTransition('dataImport', { type: 'ENTER_CHECK_PENDING' }),
               always: [
                 {
                   guard: ({ context }) => context.pendingImports.size > 0,
@@ -651,12 +754,15 @@ export const onboardingMachine = setup({
                   target: 'doneScoring',
                   actions: () => logTransition('scoring', { type: 'COMPLETE' })
                 },
-                SCORING_FAILED: { 
-                  actions: ['markScoringFailed', () => logTransition('scoring', { type: 'FAILED' })]
+                SCORING_FAILED: {
+                  actions: [
+                    'markScoringFailed',
+                    () => logTransition('scoring', { type: 'FAILED' })
+                  ]
                 }
               }
             },
-            doneScoring: { 
+            doneScoring: {
               type: 'final',
               entry: () => logTransition('scoring', { type: 'DONE' })
             }
@@ -668,7 +774,10 @@ export const onboardingMachine = setup({
         DATA_IMPORT_COMPLETE: [
           {
             guard: 'noPendingImports',
-            actions: ['removePendingImport', () => logTransition('workflow', { type: 'START_SCORING' })],
+            actions: [
+              'removePendingImport',
+              () => logTransition('workflow', { type: 'START_SCORING' })
+            ],
             target: '.scoring.scoring'
           }
         ],
