@@ -18,27 +18,30 @@ export const startPollingPlaidWebhooks = async (
 
   const poll = async () => {
     try {
-      const results = await Promise.all(
-        context.plaidItemsConnectionsQueue.map(async (plaidItemId) => {
-          const webhook =
-            await PlaidWebhookDao.getWebhookReadyForImportByItemId(
-              context.childDbConnection!,
-              plaidItemId
-            );
+      // Create a new array to store items that still need polling
+      const remainingItems: string[] = [];
 
-          if (!webhook) {
-            console.log(`No webhooks found for item_id ${plaidItemId}`);
-            return null;
-          }
+      // Check each item individually to handle them separately
+      for (const plaidItemId of context.plaidItemsConnectionsQueue) {
+        const webhook = await PlaidWebhookDao.getWebhookReadyForImportByItemId(
+          context.childDbConnection!,
+          plaidItemId
+        );
 
+        if (!webhook) {
+          console.log(`No webhooks found for item_id ${plaidItemId}`);
+          remainingItems.push(plaidItemId);
+        } else {
           console.log(`Found webhook for item_id ${plaidItemId}:`, webhook);
-          return webhook;
-        })
-      );
+        }
+      }
 
-      // Stop polling if any webhook data is received
-      if (results.some((webhook) => webhook !== null)) {
-        console.log('Webhook data received. Stopping polling.');
+      // Update the queue with only the items that still need polling
+      context.plaidItemsConnectionsQueue = remainingItems;
+
+      // Stop polling if all webhooks have been found
+      if (remainingItems.length === 0) {
+        console.log('All webhooks received. Stopping polling.');
         clearInterval(intervalId);
         clearTimeout(timeoutId);
       }
