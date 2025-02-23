@@ -9,6 +9,12 @@ import PlaidWebhookDao from './db/plaidWebhookDao';
 import { Client } from 'fauna';
 import { WorkflowLogger } from './utils/workflowLogger';
 
+const TIMEOUTS = {
+  BANK_CONNECTION: parseInt(process.env.BANK_CONNECTION_TIMEOUT_MS || '600000', 10),      // 10 minutes
+  WEBHOOK_CHECK_INTERVAL: parseInt(process.env.WEBHOOK_CHECK_INTERVAL_MS || '2000', 10),  // 2 seconds
+  DATA_IMPORT_RETRY_DELAY: parseInt(process.env.DATA_IMPORT_RETRY_DELAY_MS || '3000', 10) // 3 seconds
+} as const;
+
 type OnboardingEvent =
   // Bank Connection
   | { type: 'BANK_CONNECTED'; itemId: string }
@@ -362,7 +368,7 @@ export const onboardingMachine = setup({
             connecting: {
               entry: () => logTransition('bankConnection', { type: 'ENTER_CONNECTING' }),
               after: {
-                600000: [
+                [TIMEOUTS.BANK_CONNECTION]: [
                   {
                     guard: ({ context }) => !context.onboarded,
                     target: 'timedOut',
@@ -447,7 +453,7 @@ export const onboardingMachine = setup({
             idle: {
               entry: () => logTransition('webhookSearch', { type: 'ENTER_IDLE' }),
               after: {
-                2000: 'checking'
+                [TIMEOUTS.WEBHOOK_CHECK_INTERVAL]: 'checking'
               }
             },
             searching: {
@@ -544,7 +550,7 @@ export const onboardingMachine = setup({
             retrying: {
               entry: () => logTransition('dataImport', { type: 'ENTER_RETRYING' }),
               after: {
-                3000: 'importing'
+                [TIMEOUTS.DATA_IMPORT_RETRY_DELAY]: 'importing'
               },
               on: {
                 HISTORICAL_UPDATE: {
